@@ -82,13 +82,28 @@ function renderSessionList() {
     groupEl.className = "session-group";
     groupEl.innerHTML = `<div class="group-label">${escapeHtml(project)}</div>`;
     for (const s of items) {
-      const item = document.createElement("button");
+      const item = document.createElement("div");
       item.className =
         "session-item" + (selected?.path === s.path ? " active" : "");
-      item.innerHTML = `
+
+      const open = document.createElement("button");
+      open.className = "session-open";
+      open.innerHTML = `
         <span class="session-title">${escapeHtml(s.title)}</span>
         <span class="session-meta">${fmtDate(s.modified)} · ${s.message_count} msgs</span>`;
-      item.addEventListener("click", () => selectSession(s));
+      open.addEventListener("click", () => selectSession(s));
+
+      const del = document.createElement("button");
+      del.className = "session-del";
+      del.title = "Move session to Trash";
+      del.textContent = "🗑";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        confirmDelete(item, s);
+      });
+
+      item.appendChild(open);
+      item.appendChild(del);
       groupEl.appendChild(item);
     }
     sessionList.appendChild(groupEl);
@@ -99,6 +114,36 @@ function escapeHtml(s: string): string {
   const div = document.createElement("div");
   div.textContent = s;
   return div.innerHTML;
+}
+
+/** Replace a session row with an inline "Move to Trash?" confirmation. */
+function confirmDelete(item: HTMLElement, s: SessionMeta) {
+  item.classList.add("confirming");
+  item.innerHTML = `
+    <span class="confirm-text">Move to Trash?</span>
+    <span class="confirm-actions">
+      <button class="confirm-yes">Trash</button>
+      <button class="confirm-no">Cancel</button>
+    </span>`;
+  item.querySelector(".confirm-no")!.addEventListener("click", (e) => {
+    e.stopPropagation();
+    renderSessionList();
+  });
+  item.querySelector(".confirm-yes")!.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      await invoke("delete_session", { path: s.path });
+      sessions = sessions.filter((x) => x.path !== s.path);
+      if (selected?.path === s.path) {
+        selected = null;
+        viewer.classList.add("hidden");
+        emptyState.classList.remove("hidden");
+      }
+    } catch (err) {
+      setStatus(`Could not delete session: ${err}`, "error");
+    }
+    renderSessionList();
+  });
 }
 
 function setStatus(msg: string, kind: "info" | "error" | "" = "info") {

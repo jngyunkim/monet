@@ -55,6 +55,61 @@ async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, Stri
     .map_err(|e| e.to_string())?
 }
 
+/// Resolve `path` to a canonical path, rejecting anything that does not live
+/// under `base`. Both sides are canonicalized: on macOS canonicalize() resolves
+/// the /Users firmlink to /System/Volumes/Data/Users, so comparing against a
+/// non-canonical base would always fail.
+fn resolve_within(path: &str, base: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let base = base
+        .canonicalize()
+        .map_err(|e| format!("could not resolve projects dir: {e}"))?;
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("session not found: {e}"))?;
+    if !canonical.starts_with(&base) {
+        return Err("refusing to delete a file outside ~/.claude/projects".to_string());
+    }
+    Ok(canonical)
+}
+
+/// Move a session's .jsonl file to the OS trash (recoverable). Guards against
+/// deleting anything outside ~/.claude/projects.
+#[tauri::command]
+async fn delete_session(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let projects = dirs::home_dir()
+            .map(|h| h.join(".claude").join("projects"))
+            .ok_or("could not resolve home directory")?;
+        let canonical = resolve_within(&path, &projects)?;
+        trash::delete(&canonical).map_err(|e| format!("could not move to Trash: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_within;
+    use std::fs;
+
+    #[test]
+    fn accepts_file_inside_base_and_rejects_outside() {
+        let root = std::env::temp_dir().join(format!("bp-del-{}", std::process::id()));
+        let base = root.join("projects");
+        let proj = base.join("proj");
+        fs::create_dir_all(&proj).unwrap();
+        let inside = proj.join("s.jsonl");
+        fs::write(&inside, "{}").unwrap();
+        let outside = root.join("evil.jsonl");
+        fs::write(&outside, "{}").unwrap();
+
+        assert!(resolve_within(inside.to_str().unwrap(), &base).is_ok());
+        assert!(resolve_within(outside.to_str().unwrap(), &base).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -63,7 +118,8 @@ pub fn run() {
             list_sessions,
             get_transcript,
             check_deps,
-            generate_diagrams
+            generate_diagrams,
+            delete_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
