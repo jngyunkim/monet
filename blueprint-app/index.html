@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Blueprint</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <header class="sidebar-header">
+          <h1>Blueprint</h1>
+          <button id="refresh-btn" title="Reload session list">⟳</button>
+        </header>
+        <input id="filter-input" placeholder="Filter sessions..." />
+        <div id="session-list"></div>
+        <div id="dep-status" class="dep-status"></div>
+      </aside>
+
+      <main id="main">
+        <div id="empty-state" class="empty-state">
+          <div class="empty-art">▦</div>
+          <p>Pick a session on the left to visualize its architecture.</p>
+          <p class="hint">Blueprint asks your local Claude Code to turn the
+            design discussion into diagrams.</p>
+        </div>
+
+        <section id="viewer" class="viewer hidden">
+          <header class="viewer-header">
+            <div class="viewer-title">
+              <h2 id="viewer-title">—</h2>
+              <span id="viewer-sub" class="viewer-sub"></span>
+            </div>
+            <div class="viewer-actions">
+              <div class="tabs">
+                <button class="tab active" data-view="diagrams">Diagrams</button>
+                <button class="tab" data-view="transcript">Transcript</button>
+              </div>
+              <button id="regen-btn" title="Regenerate diagrams">Regenerate</button>
+            </div>
+          </header>
+
+          <div id="status-bar" class="status-bar hidden"></div>
+          <div id="diagrams-view" class="diagrams-view"></div>
+          <pre id="transcript-view" class="transcript-view hidden"></pre>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
