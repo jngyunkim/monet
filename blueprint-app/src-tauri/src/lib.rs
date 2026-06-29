@@ -1,9 +1,11 @@
 mod cache;
 mod diagram;
+mod glossary;
 mod session;
 mod util;
 
 use diagram::{DepStatus, DiagramSet};
+use glossary::GlossarySet;
 use session::SessionMeta;
 
 const DEFAULT_MODEL: &str = "sonnet";
@@ -40,7 +42,7 @@ async fn check_deps() -> DepStatus {
 async fn cached_diagrams(path: String) -> Option<DiagramSet> {
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&path, mtime)
+        cache::load("diagrams", &path, mtime)
     })
     .await
     .ok()
@@ -52,7 +54,7 @@ async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, Stri
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
         if !force {
-            if let Some(cached) = cache::load(&path, mtime) {
+            if let Some(cached) = cache::load("diagrams", &path, mtime) {
                 return Ok(cached);
             }
         }
@@ -61,7 +63,40 @@ async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, Stri
             return Err("This session has no readable conversation text.".to_string());
         }
         let set = diagram::generate(&transcript, DEFAULT_MODEL)?;
-        cache::save(&path, mtime, &set);
+        cache::save("diagrams", &path, mtime, &set);
+        Ok(set)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Cached glossary for a session without invoking Claude (null when none).
+#[tauri::command]
+async fn cached_glossary(path: String) -> Option<GlossarySet> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        cache::load("glossary", &path, mtime)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[tauri::command]
+async fn generate_glossary(path: String, force: bool) -> Result<GlossarySet, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        if !force {
+            if let Some(cached) = cache::load("glossary", &path, mtime) {
+                return Ok(cached);
+            }
+        }
+        let transcript = session::extract_transcript(&path)?;
+        if transcript.trim().is_empty() {
+            return Err("This session has no readable conversation text.".to_string());
+        }
+        let set = glossary::generate(&transcript, DEFAULT_MODEL)?;
+        cache::save("glossary", &path, mtime, &set);
         Ok(set)
     })
     .await
@@ -135,6 +170,8 @@ pub fn run() {
             check_deps,
             cached_diagrams,
             generate_diagrams,
+            cached_glossary,
+            generate_glossary,
             delete_session
         ])
         .run(tauri::generate_context!())

@@ -25,6 +25,9 @@ type Diagram = {
 
 type DiagramSet = { diagrams: Diagram[] };
 
+type Term = { term: string; definition: string; category: string };
+type GlossarySet = { terms: Term[] };
+
 type DepStatus = {
   claude: boolean;
   python: boolean;
@@ -34,6 +37,10 @@ type DepStatus = {
 
 let sessions: SessionMeta[] = [];
 let selected: SessionMeta | null = null;
+let currentView: "diagrams" | "terms" | "transcript" = "diagrams";
+let hasDiagrams = false;
+let hasGlossary = false;
+let termsLoadedForPath: string | null = null;
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -45,6 +52,7 @@ const viewerTitle = $("#viewer-title");
 const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const diagramsView = $("#diagrams-view");
+const termsView = $("#terms-view");
 const transcriptView = $<HTMLPreElement>("#transcript-view");
 
 function fmtDate(epochSecs: number): string {
@@ -164,6 +172,10 @@ async function selectSession(s: SessionMeta) {
   viewer.classList.remove("hidden");
   viewerTitle.textContent = s.title;
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
+  hasDiagrams = false;
+  hasGlossary = false;
+  termsLoadedForPath = null;
+  termsView.innerHTML = "";
   switchView("diagrams");
   transcriptView.textContent = "Loading transcript…";
   await showDiagramsOrPrompt(s);
@@ -182,17 +194,17 @@ async function selectSession(s: SessionMeta) {
 async function showDiagramsOrPrompt(s: SessionMeta) {
   setStatus("");
   diagramsView.innerHTML = "";
-  $("#regen-btn").classList.add("hidden");
   const cached = await invoke<DiagramSet | null>("cached_diagrams", {
     path: s.path,
   });
   if (selected?.path !== s.path) return; // user switched away
   if (cached && cached.diagrams && cached.diagrams.length > 0) {
-    $("#regen-btn").classList.remove("hidden");
+    hasDiagrams = true;
     await renderDiagrams(cached);
   } else {
     showGeneratePrompt(s);
   }
+  updateRegenButton();
 }
 
 function showGeneratePrompt(s: SessionMeta) {
@@ -225,7 +237,8 @@ async function loadDiagrams(s: SessionMeta, force: boolean) {
     });
     if (selected?.path !== s.path) return; // user switched away
     setStatus("");
-    $("#regen-btn").classList.remove("hidden");
+    hasDiagrams = true;
+    updateRegenButton();
     await renderDiagrams(set);
   } catch (e) {
     if (selected?.path !== s.path) return;
@@ -293,12 +306,105 @@ async function renderDiagrams(set: DiagramSet) {
   }
 }
 
-function switchView(view: "diagrams" | "transcript") {
+function switchView(view: "diagrams" | "terms" | "transcript") {
+  currentView = view;
   document.querySelectorAll(".tab").forEach((t) => {
     t.classList.toggle("active", (t as HTMLElement).dataset.view === view);
   });
   diagramsView.classList.toggle("hidden", view !== "diagrams");
+  termsView.classList.toggle("hidden", view !== "terms");
   transcriptView.classList.toggle("hidden", view !== "transcript");
+  updateRegenButton();
+  if (view === "terms" && selected && termsLoadedForPath !== selected.path) {
+    showTermsOrPrompt(selected);
+  }
+}
+
+/** The header Regenerate button acts on the active view and only shows when
+ *  that view already has generated content. */
+function updateRegenButton() {
+  const btn = $("#regen-btn");
+  const show =
+    (currentView === "diagrams" && hasDiagrams) ||
+    (currentView === "terms" && hasGlossary);
+  btn.classList.toggle("hidden", !show);
+}
+
+// ---------- Glossary (Terms) ----------
+
+async function showTermsOrPrompt(s: SessionMeta) {
+  termsLoadedForPath = s.path;
+  setStatus("");
+  termsView.innerHTML = "";
+  const cached = await invoke<GlossarySet | null>("cached_glossary", {
+    path: s.path,
+  });
+  if (selected?.path !== s.path || currentView !== "terms") return;
+  if (cached && cached.terms && cached.terms.length > 0) {
+    hasGlossary = true;
+    renderGlossary(cached);
+  } else {
+    showGlossaryPrompt(s);
+  }
+  updateRegenButton();
+}
+
+function showGlossaryPrompt(s: SessionMeta) {
+  termsView.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "generate-prompt";
+  wrap.innerHTML = `
+    <p>No glossary generated for this session yet.</p>
+    <button class="generate-btn">✦ Generate Glossary</button>
+    <p class="hint">Blueprint asks your local Claude Code to collect the technical
+      terms from this session and explain each one in context. Cached after first run.</p>`;
+  wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
+    loadGlossary(s, false),
+  );
+  termsView.appendChild(wrap);
+}
+
+async function loadGlossary(s: SessionMeta, force: boolean) {
+  setStatus(
+    force
+      ? "Regenerating glossary via Claude Code…"
+      : "Building glossary via Claude Code… (first run can take ~30s)",
+    "info",
+  );
+  termsView.innerHTML = "";
+  try {
+    const set = await invoke<GlossarySet>("generate_glossary", {
+      path: s.path,
+      force,
+    });
+    if (selected?.path !== s.path) return;
+    setStatus("");
+    hasGlossary = true;
+    updateRegenButton();
+    renderGlossary(set);
+  } catch (e) {
+    if (selected?.path !== s.path) return;
+    setStatus(String(e), "error");
+  }
+}
+
+function renderGlossary(set: GlossarySet) {
+  termsView.innerHTML = "";
+  if (!set.terms || set.terms.length === 0) {
+    termsView.innerHTML = `<p class="muted">No terms were found for this session.</p>`;
+    return;
+  }
+  for (const t of set.terms) {
+    const card = document.createElement("div");
+    card.className = "term-card";
+    const cat = t.category
+      ? `<span class="term-cat">${escapeHtml(t.category)}</span>`
+      : "";
+    card.innerHTML = `
+      <div class="term-head"><span class="term-name">${escapeHtml(t.term)}</span>${cat}</div>
+      <p class="term-def">${escapeHtml(t.definition)}</p>`;
+    termsView.appendChild(card);
+  }
 }
 
 async function refreshSessions() {
@@ -380,7 +486,9 @@ function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
   $("#regen-btn").addEventListener("click", () => {
-    if (selected) loadDiagrams(selected, true);
+    if (!selected) return;
+    if (currentView === "terms") loadGlossary(selected, true);
+    else loadDiagrams(selected, true);
   });
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
   document.querySelectorAll(".tab").forEach((t) => {

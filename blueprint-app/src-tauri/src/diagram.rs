@@ -75,10 +75,9 @@ pub fn check_deps() -> DepStatus {
 /// transcripts from the front so the most recent design discussion is kept.
 fn build_prompt(transcript: &str) -> String {
     let body = if transcript.len() > MAX_TRANSCRIPT_CHARS {
-        let start = transcript.len() - MAX_TRANSCRIPT_CHARS;
         format!(
             "[...transcript truncated...]\n{}",
-            &transcript[start..]
+            crate::util::tail_chars(transcript, MAX_TRANSCRIPT_CHARS)
         )
     } else {
         transcript.to_string()

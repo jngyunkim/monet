@@ -1,4 +1,5 @@
-use crate::diagram::DiagramSet;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -10,28 +11,28 @@ fn cache_dir() -> PathBuf {
         .join("blueprint")
 }
 
-/// Cache key is derived from the session path plus its mtime, so a changed
-/// session naturally invalidates its cached diagrams.
-fn cache_file(path: &str, mtime: u64) -> PathBuf {
+/// Cache key is derived from a namespace ("diagrams", "glossary", …) plus the
+/// session path and its mtime, so a changed session naturally invalidates its
+/// cached artifacts and different artifact kinds never collide.
+fn cache_file(namespace: &str, path: &str, mtime: u64) -> PathBuf {
     let mut h = DefaultHasher::new();
+    namespace.hash(&mut h);
     path.hash(&mut h);
     mtime.hash(&mut h);
     cache_dir().join(format!("{:016x}.json", h.finish()))
 }
 
-pub fn load(path: &str, mtime: u64) -> Option<DiagramSet> {
-    let f = cache_file(path, mtime);
-    let content = fs::read_to_string(f).ok()?;
+pub fn load<T: DeserializeOwned>(namespace: &str, path: &str, mtime: u64) -> Option<T> {
+    let content = fs::read_to_string(cache_file(namespace, path, mtime)).ok()?;
     serde_json::from_str(&content).ok()
 }
 
-pub fn save(path: &str, mtime: u64, set: &DiagramSet) {
-    let dir = cache_dir();
-    if fs::create_dir_all(&dir).is_err() {
+pub fn save<T: Serialize>(namespace: &str, path: &str, mtime: u64, value: &T) {
+    if fs::create_dir_all(cache_dir()).is_err() {
         return;
     }
-    if let Ok(json) = serde_json::to_string(set) {
-        let _ = fs::write(cache_file(path, mtime), json);
+    if let Ok(json) = serde_json::to_string(value) {
+        let _ = fs::write(cache_file(namespace, path, mtime), json);
     }
 }
 

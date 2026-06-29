@@ -37,6 +37,19 @@ fn which_on_path(name: &str) -> bool {
     false
 }
 
+/// Return the last `max` bytes of `s`, snapped forward to a UTF-8 char boundary
+/// so slicing never panics on multi-byte characters.
+pub fn tail_chars(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut start = s.len() - max;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
+}
+
 /// An augmented PATH string that includes common bin dirs, for passing to
 /// child processes so that tools like `dot` (graphviz) resolve correctly.
 pub fn augmented_path() -> String {
