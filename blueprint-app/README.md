@@ -51,3 +51,25 @@ npm run tauri build
 - `src/main.ts` — UI: session list, diagram rendering, transcript view
 
 The default model is `sonnet` (see `DEFAULT_MODEL` in `lib.rs`).
+
+## Releases & in-app updates
+
+The app self-updates via the Tauri updater, reading `latest.json` from the
+GitHub Releases of `jngyunkim/blueprint`.
+
+To cut a release:
+
+```bash
+# bump version in src-tauri/tauri.conf.json + package.json, then:
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+The `.github/workflows/release.yml` workflow builds on a macOS runner, signs the
+update with the private key (repo secrets `TAURI_SIGNING_PRIVATE_KEY` /
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), and publishes the `.dmg`, the updater
+tarball + `.sig`, and `latest.json`. Running apps then see the update on launch
+or via "Check for updates".
+
+> The signing key lives at `~/.tauri/blueprint_updater.key` (keep it safe — it
+> is **not** in the repo). The matching public key is in `tauri.conf.json`.
+

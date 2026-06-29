@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import mermaid from "mermaid";
 
 mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "loose" });
@@ -164,7 +166,7 @@ async function selectSession(s: SessionMeta) {
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   switchView("diagrams");
   transcriptView.textContent = "Loading transcript…";
-  await loadDiagrams(s, false);
+  await showDiagramsOrPrompt(s);
   // Load transcript lazily for the Transcript tab.
   invoke<string>("get_transcript", { path: s.path })
     .then((t) => {
@@ -174,6 +176,38 @@ async function selectSession(s: SessionMeta) {
       if (selected?.path === s.path)
         transcriptView.textContent = `Could not load transcript: ${e}`;
     });
+}
+
+/** On selecting a session: show cached diagrams if present, else a Generate button. */
+async function showDiagramsOrPrompt(s: SessionMeta) {
+  setStatus("");
+  diagramsView.innerHTML = "";
+  $("#regen-btn").classList.add("hidden");
+  const cached = await invoke<DiagramSet | null>("cached_diagrams", {
+    path: s.path,
+  });
+  if (selected?.path !== s.path) return; // user switched away
+  if (cached && cached.diagrams && cached.diagrams.length > 0) {
+    $("#regen-btn").classList.remove("hidden");
+    await renderDiagrams(cached);
+  } else {
+    showGeneratePrompt(s);
+  }
+}
+
+function showGeneratePrompt(s: SessionMeta) {
+  diagramsView.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "generate-prompt";
+  wrap.innerHTML = `
+    <p>No diagrams generated for this session yet.</p>
+    <button class="generate-btn">✦ Generate Diagrams</button>
+    <p class="hint">Blueprint asks your local Claude Code to read the design
+      discussion and draw it. The result is cached, so it only runs once.</p>`;
+  wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
+    loadDiagrams(s, false),
+  );
+  diagramsView.appendChild(wrap);
 }
 
 async function loadDiagrams(s: SessionMeta, force: boolean) {
@@ -191,6 +225,7 @@ async function loadDiagrams(s: SessionMeta, force: boolean) {
     });
     if (selected?.path !== s.path) return; // user switched away
     setStatus("");
+    $("#regen-btn").classList.remove("hidden");
     await renderDiagrams(set);
   } catch (e) {
     if (selected?.path !== s.path) return;
@@ -282,12 +317,72 @@ async function refreshDeps() {
     )} Infra diagrams</div>`;
 }
 
+// ---------- Auto-update ----------
+
+async function checkForUpdates(manual: boolean) {
+  const btn = $<HTMLButtonElement>("#update-btn");
+  if (manual) {
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+  }
+  try {
+    const update = await check();
+    if (update) {
+      showUpdateBanner(update);
+    } else if (manual) {
+      btn.textContent = "Up to date ✓";
+      setTimeout(() => (btn.textContent = "Check for updates"), 2500);
+    }
+  } catch (e) {
+    if (manual) {
+      btn.textContent = "Check failed";
+      setTimeout(() => (btn.textContent = "Check for updates"), 2500);
+      console.error("update check failed", e);
+    }
+    // Silent on startup (e.g. offline, or no release published yet).
+  } finally {
+    if (manual) btn.disabled = false;
+  }
+}
+
+function showUpdateBanner(update: Update) {
+  document.getElementById("update-banner")?.remove();
+  const banner = document.createElement("div");
+  banner.id = "update-banner";
+  banner.innerHTML = `
+    <span>Update available: <b>v${escapeHtml(update.version)}</b></span>
+    <span class="update-actions">
+      <button id="update-install">Install & Restart</button>
+      <button id="update-dismiss">Later</button>
+    </span>`;
+  document.body.appendChild(banner);
+
+  banner.querySelector("#update-dismiss")!.addEventListener("click", () =>
+    banner.remove(),
+  );
+  banner.querySelector("#update-install")!.addEventListener("click", async () => {
+    const install = banner.querySelector<HTMLButtonElement>("#update-install")!;
+    install.disabled = true;
+    install.textContent = "Downloading…";
+    try {
+      await update.downloadAndInstall();
+      install.textContent = "Restarting…";
+      await relaunch();
+    } catch (e) {
+      install.disabled = false;
+      install.textContent = "Retry";
+      console.error("update install failed", e);
+    }
+  });
+}
+
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
   $("#regen-btn").addEventListener("click", () => {
     if (selected) loadDiagrams(selected, true);
   });
+  $("#update-btn").addEventListener("click", () => checkForUpdates(true));
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () =>
       switchView((t as HTMLElement).dataset.view as "diagrams" | "transcript"),
@@ -299,4 +394,5 @@ window.addEventListener("DOMContentLoaded", () => {
   wireUi();
   refreshSessions();
   refreshDeps();
+  checkForUpdates(false);
 });

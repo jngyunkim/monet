@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag like v0.1.1 to build a signed macOS release with updater
+# artifacts (.app.tar.gz + .sig) and a latest.json the app reads to self-update.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: blueprint-app/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: blueprint-app
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: blueprint-app
+          tagName: ${{ github.ref_name }}
+          releaseName: "Blueprint ${{ github.ref_name }}"
+          releaseBody: "Download the .dmg to install. Existing installs update in-app."
+          releaseDraft: false
+          prerelease: false
+          args: --target aarch64-apple-darwin

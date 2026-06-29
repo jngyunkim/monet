@@ -34,6 +34,19 @@ async fn check_deps() -> DepStatus {
         })
 }
 
+/// Return cached diagrams for a session without invoking Claude. Returns null
+/// when nothing is cached, so the UI can show an explicit "Generate" button.
+#[tauri::command]
+async fn cached_diagrams(path: String) -> Option<DiagramSet> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mtime = cache::mtime_of(&path);
+        cache::load(&path, mtime)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[tauri::command]
 async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -113,11 +126,14 @@ mod tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_sessions,
             get_transcript,
             check_deps,
+            cached_diagrams,
             generate_diagrams,
             delete_session
         ])
