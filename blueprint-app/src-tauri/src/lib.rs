@@ -1,14 +1,15 @@
-mod bundle;
+mod ask;
 mod cache;
-mod design;
 mod diagram;
 mod glossary;
 mod imported;
+mod level;
 mod session;
 mod util;
 
-use bundle::Bundle;
+use ask::Turn;
 use diagram::DepStatus;
+use level::LevelResult;
 use session::SessionMeta;
 
 const DEFAULT_MODEL: &str = "sonnet";
@@ -70,35 +71,35 @@ async fn check_deps() -> DepStatus {
         })
 }
 
-/// Return the cached bundle (design levels + diagrams + terms) for a source
-/// without invoking Claude. Returns null when nothing is cached, so the UI can
-/// show an explicit "Generate" button.
+/// Cached result for ONE design level (null when not yet generated), so the UI
+/// can show a per-level Generate button without invoking Claude.
 #[tauri::command]
-async fn cached_bundle(path: String, lang: Option<String>) -> Option<Bundle> {
+async fn cached_level(path: String, level: String, lang: Option<String>) -> Option<LevelResult> {
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        cache::load(&format!("bundle-{lang}"), &path, mtime)
+        cache::load(&format!("level-{level}-{lang}"), &path, mtime)
     })
     .await
     .ok()
     .flatten()
 }
 
-/// Generate the full bundle in a single Claude call (one read of the source),
-/// caching the result. `force` bypasses the cache to regenerate.
+/// Generate ONE design level (prose + that level's diagrams + terms) in a single
+/// Claude call, caching it. `force` bypasses the cache to regenerate.
 #[tauri::command]
-async fn generate_bundle(
+async fn generate_level(
     path: String,
+    level: String,
     force: bool,
     model: Option<String>,
     lang: Option<String>,
-) -> Result<Bundle, String> {
+) -> Result<LevelResult, String> {
     let model = resolve_model(model);
     let lang = lang_of(lang);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
-        let ns = format!("bundle-{lang}");
+        let ns = format!("level-{level}-{lang}");
         if !force {
             if let Some(cached) = cache::load(&ns, &path, mtime) {
                 return Ok(cached);
@@ -108,12 +109,50 @@ async fn generate_bundle(
         if transcript.trim().is_empty() {
             return Err("This source has no readable text.".to_string());
         }
-        let bundle = bundle::generate(&transcript, &model, &lang)?;
-        cache::save(&ns, &path, mtime, &bundle);
-        Ok(bundle)
+        let result = level::generate(&transcript, &level, &model, &lang)?;
+        cache::save(&ns, &path, mtime, &result);
+        Ok(result)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Answer a follow-up question about the source (Ask tab), using the document
+/// as context plus the prior conversation turns.
+#[tauri::command]
+async fn ask(
+    path: String,
+    history: Vec<Turn>,
+    question: String,
+    model: Option<String>,
+    lang: Option<String>,
+) -> Result<String, String> {
+    let model = resolve_model(model);
+    let lang = lang_of(lang);
+    tauri::async_runtime::spawn_blocking(move || {
+        let transcript = source_transcript(&path)?;
+        if transcript.trim().is_empty() {
+            return Err("This source has no readable text.".to_string());
+        }
+        ask::answer(&transcript, &history, &question, &model, &lang)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Try to repair mermaid that failed to render in the webview.
+#[tauri::command]
+async fn fix_mermaid(source: String, model: Option<String>) -> Result<String, String> {
+    let model = resolve_model(model);
+    tauri::async_runtime::spawn_blocking(move || diagram::fix_mermaid(&source, &model))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Kill any in-flight headless `claude` process(es). Returns how many.
+#[tauri::command]
+async fn cancel_generation() -> usize {
+    diagram::cancel_all()
 }
 
 // ---------- Imported link sources ----------
@@ -205,8 +244,11 @@ pub fn run() {
             list_sessions,
             get_transcript,
             check_deps,
-            cached_bundle,
-            generate_bundle,
+            cached_level,
+            generate_level,
+            ask,
+            fix_mermaid,
+            cancel_generation,
             import_link,
             refresh_source,
             delete_session

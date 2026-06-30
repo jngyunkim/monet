@@ -20,16 +20,23 @@ type Diagram = {
   kind: string; // "mermaid" | "mingrammer"
   source: string;
   explanation: string;
-  level: string; // "High-level" | "Detailed" | "Implementation"
+  level: string;
   rendered: string;
   unavailable: string | null;
 };
 
 type Term = { term: string; definition: string; category: string };
-type Level = { level: string; title: string; content: string };
 
-/** Produced in one Claude call; drives all three generated tabs. */
-type Bundle = { levels: Level[]; diagrams: Diagram[]; terms: Term[] };
+/** One generated design level: prose + that level's diagrams + terms. */
+type LevelResult = {
+  level: string;
+  title: string;
+  content: string;
+  diagrams: Diagram[];
+  terms: Term[];
+};
+
+type AskTurn = { role: "user" | "assistant"; content: string };
 
 type DepStatus = {
   claude: boolean;
@@ -42,14 +49,27 @@ let sessions: SessionMeta[] = [];
 let selected: SessionMeta | null = null;
 let sourceTab: "sessions" | "links" = "sessions";
 const isLinkSource = (s: SessionMeta) => s.path.endsWith(".links.json");
-type View = "diagrams" | "design" | "terms" | "transcript";
-let currentView: View = "diagrams";
-// One generation fills all three tabs. `bundle` holds the in-memory result for
-// the selected source; null until generated (or while a different source loads).
-let bundle: Bundle | null = null;
-let generating = false;
-// Remembers which design level the user last viewed, restored on tab switch.
-let designLevelIndex = 0;
+type View = "design" | "ask" | "transcript";
+let currentView: View = "design";
+
+// The three design levels (stable key + display name).
+const LEVELS = [
+  { key: "high", name: "High-level" },
+  { key: "detailed", name: "Detailed" },
+  { key: "impl", name: "Implementation" },
+] as const;
+type LevelKey = (typeof LEVELS)[number]["key"];
+
+// In-memory per-level results for the selected source (null = not generated).
+let levelCache: Record<string, LevelResult | null> = {};
+let levelIndex = 0;
+// Which level key is mid-generation (empty when idle).
+let generatingLevel: LevelKey | null = null;
+
+// Ask tab conversation for the selected source.
+let askHistory: AskTurn[] = [];
+let asking = false;
+
 const collapsedGroups = new Set<string>();
 
 type Lang = "en" | "ko";
@@ -77,9 +97,8 @@ const viewer = $("#viewer");
 const viewerTitle = $("#viewer-title");
 const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
-const diagramsView = $("#diagrams-view");
 const designView = $("#design-view");
-const termsView = $("#terms-view");
+const askView = $("#ask-view");
 const transcriptView = $<HTMLPreElement>("#transcript-view");
 
 function fmtDate(epochSecs: number): string {
@@ -239,25 +258,33 @@ async function selectSession(s: SessionMeta) {
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   const link = isLinkSource(s);
   $("#refresh-source-btn").classList.toggle("hidden", !link);
-  // The 4th tab is "Source" for imported links, "Transcript" for sessions.
+  // The last tab is "Source" for imported links, "Transcript" for sessions.
   $("#tab-transcript").textContent = link ? "Source" : "Transcript";
 
-  bundle = null;
-  designLevelIndex = 0;
-  generating = false;
-  switchView("diagrams");
+  // Reset per-source state.
+  levelCache = {};
+  levelIndex = 0;
+  generatingLevel = null;
+  askHistory = [];
+  asking = false;
+  switchView("design");
+  designView.innerHTML = "";
+  renderAsk();
   transcriptView.textContent = "Loading transcript…";
 
-  // Load any cached bundle (no Claude call); render the active tab from it.
-  const cached = await invoke<Bundle | null>("cached_bundle", { path: s.path, lang });
+  // Prefetch cached levels (no Claude calls) so the selector can mark which are
+  // already generated, then render the Design tab.
+  const results = await Promise.all(
+    LEVELS.map((l) =>
+      invoke<LevelResult | null>("cached_level", { path: s.path, level: l.key, lang }),
+    ),
+  );
   if (selected?.path !== s.path) return; // user switched away
-  if (cached && bundleHasContent(cached)) {
-    bundle = cached;
-  }
-  renderActiveView();
+  LEVELS.forEach((l, i) => (levelCache[l.key] = results[i]));
+  renderDesign();
   updateGenerateButton();
 
-  // Load the raw transcript/source lazily for the 4th tab.
+  // Load the raw transcript/source lazily for the last tab.
   invoke<string>("get_transcript", { path: s.path })
     .then((t) => {
       if (selected?.path === s.path) transcriptView.textContent = t;
@@ -268,112 +295,41 @@ async function selectSession(s: SessionMeta) {
     });
 }
 
-function bundleHasContent(b: Bundle): boolean {
-  return (
-    (b.levels?.length ?? 0) +
-      (b.diagrams?.length ?? 0) +
-      (b.terms?.length ?? 0) >
-    0
-  );
-}
-
-/** The generated content view element for a given tab (transcript excluded). */
-function generatedEl(view: View): HTMLElement {
-  return view === "design" ? designView : view === "terms" ? termsView : diagramsView;
-}
-
-/** Render whatever the active tab should show: the bundle, or a placeholder. */
-function renderActiveView() {
-  if (generating || currentView === "transcript") return;
-  if (!bundle) {
-    showGeneratePlaceholder(currentView);
-    return;
-  }
-  if (currentView === "diagrams") renderDiagrams(bundle.diagrams);
-  else if (currentView === "design") renderDesign(bundle.levels, bundle.diagrams);
-  else if (currentView === "terms") renderTerms(bundle.terms);
-}
-
-/** Unified empty-state placeholder, shared by Diagrams / Design / Terms. */
-function showGeneratePlaceholder(view: View) {
-  const el = generatedEl(view);
-  el.innerHTML = `
-    <div class="generate-prompt">
-      <div class="generate-art">✦</div>
-      <p>Nothing generated for this source yet.</p>
-      <button class="generate-btn">✦ Generate</button>
-      <p class="hint">Monet asks your local Claude Code to read this source once and
-        produce the <b>diagrams</b>, the layered <b>design</b> view, and the
-        <b>glossary</b> together — all from what the document actually says.
-        The result is cached, so it only runs once.</p>
-    </div>`;
-  el.querySelector(".generate-btn")!.addEventListener("click", () =>
-    generateBundle(false),
-  );
-}
-
-/** Single generation that fills all three tabs (one read of the source). */
-async function generateBundle(force: boolean) {
-  if (!selected || generating) return;
-  const s = selected;
-  setStatus("");
-  if (currentView === "transcript") switchView("diagrams");
-  generating = true;
-  updateGenerateButton();
-  const stop = renderLoading(
-    generatedEl(currentView),
-    force ? "Regenerating diagrams, design & terms…" : "Generating diagrams, design & terms…",
-  );
-  try {
-    const result = await invoke<Bundle>("generate_bundle", {
-      path: s.path,
-      force,
-      model,
-      lang,
-    });
-    stop();
-    generating = false;
-    if (selected?.path !== s.path) return; // user switched away
-    bundle = result;
-    designLevelIndex = 0;
-    renderActiveView();
-    updateGenerateButton();
-  } catch (e) {
-    stop();
-    generating = false;
-    if (selected?.path !== s.path) return;
-    renderActiveView(); // back to the placeholder
-    updateGenerateButton();
-    setStatus(String(e), "error");
-  }
-}
-
-const LEVEL_CLASS: Record<string, string> = {
-  "High-level": "lvl-high",
-  Detailed: "lvl-detailed",
-  Implementation: "lvl-impl",
-};
+// ---------- Diagrams (rendered inline inside design levels) ----------
 
 let mermaidSeq = 0;
 
-/** Build one diagram card and render it into `container`. Used by the Diagrams
- *  gallery (with a level badge) and inline inside Design levels (without). */
-async function appendDiagramCard(
-  container: HTMLElement,
-  d: Diagram,
-  withBadge: boolean,
-) {
+/** Render mermaid into `body`; on parse failure, ask the backend to repair it
+ *  once and retry before giving up. */
+async function renderMermaid(body: HTMLElement, src: HTMLElement, source: string): Promise<boolean> {
+  try {
+    const { svg } = await mermaid.render(`mmd-${mermaidSeq++}`, source);
+    body.innerHTML = svg;
+    return true;
+  } catch {
+    body.innerHTML = `<div class="unavailable">Fixing diagram syntax…</div>`;
+    try {
+      const fixed = await invoke<string>("fix_mermaid", { source, model });
+      const { svg } = await mermaid.render(`mmd-${mermaidSeq++}`, fixed);
+      body.innerHTML = svg;
+      src.textContent = fixed;
+      return true;
+    } catch (e2) {
+      body.innerHTML = `<div class="unavailable">Mermaid render failed: ${escapeHtml(String(e2))}</div>`;
+      src.classList.remove("hidden");
+      return false;
+    }
+  }
+}
+
+async function appendDiagramCard(container: HTMLElement, d: Diagram) {
   const card = document.createElement("section");
   card.className = "diagram-card";
 
-  const badge =
-    withBadge && d.level
-      ? `<span class="level-badge ${LEVEL_CLASS[d.level] ?? ""}">${escapeHtml(d.level)}</span>`
-      : "";
   const head = document.createElement("div");
   head.className = "diagram-head";
   head.innerHTML = `
-    <h3>${badge}${escapeHtml(d.title)}</h3>
+    <h3>${escapeHtml(d.title)}</h3>
     <span class="diagram-tools">
       <button class="mini-btn expand-btn hidden">⤢ Expand</button>
       <button class="mini-btn src-toggle">&lt;/&gt; Source</button>
@@ -406,16 +362,7 @@ async function appendDiagramCard(
   if (d.unavailable) {
     body.innerHTML = `<div class="unavailable">⚠︎ ${escapeHtml(d.unavailable)}</div>`;
   } else if (d.kind === "mermaid") {
-    try {
-      const { svg } = await mermaid.render(`mmd-${mermaidSeq++}`, d.source);
-      body.innerHTML = svg;
-      rendered = true;
-    } catch (e) {
-      body.innerHTML = `<div class="unavailable">Mermaid render failed: ${escapeHtml(
-        String(e),
-      )}</div>`;
-      src.classList.remove("hidden");
-    }
+    rendered = await renderMermaid(body, src, d.source);
   } else if (d.kind === "mingrammer" && d.rendered) {
     body.innerHTML = d.rendered;
     rendered = true;
@@ -428,15 +375,6 @@ async function appendDiagramCard(
     expand.classList.remove("hidden");
     expand.addEventListener("click", () => openLightbox(d.title, body.innerHTML));
   }
-}
-
-async function renderDiagrams(diagrams: Diagram[]) {
-  diagramsView.innerHTML = "";
-  if (!diagrams || diagrams.length === 0) {
-    diagramsView.innerHTML = `<p class="muted">No diagrams were produced for this source.</p>`;
-    return;
-  }
-  for (const d of diagrams) await appendDiagramCard(diagramsView, d, true);
 }
 
 // ---------- Lightbox ----------
@@ -457,103 +395,305 @@ function switchView(view: View) {
   document.querySelectorAll(".tab").forEach((t) => {
     t.classList.toggle("active", (t as HTMLElement).dataset.view === view);
   });
-  diagramsView.classList.toggle("hidden", view !== "diagrams");
   designView.classList.toggle("hidden", view !== "design");
-  termsView.classList.toggle("hidden", view !== "terms");
+  askView.classList.toggle("hidden", view !== "ask");
   transcriptView.classList.toggle("hidden", view !== "transcript");
-  renderActiveView();
+  updateGenerateButton();
 }
 
-/** The header button is a single Generate/Regenerate control: "Generate" the
- *  first time, "Regenerate" once a cached bundle exists. Hidden while running. */
+/** Header Generate/Regenerate button acts on the CURRENT design level; only
+ *  shown on the Design tab while idle. */
 function updateGenerateButton() {
   const btn = $<HTMLButtonElement>("#regen-btn");
-  if (!selected || generating) {
+  if (!selected || currentView !== "design" || generatingLevel) {
     btn.classList.add("hidden");
     return;
   }
   btn.classList.remove("hidden");
-  btn.textContent = bundle ? "↻ Regenerate" : "✦ Generate";
+  const key = LEVELS[levelIndex].key;
+  btn.textContent = levelCache[key] ? "↻ Regenerate" : "✦ Generate";
 }
 
-// ---------- Design levels (one at a time, with inline diagrams) ----------
+// ---------- Design levels (per-level, on demand) ----------
 
-function renderDesign(levels: Level[], diagrams: Diagram[]) {
+let levelLoadingStop: (() => void) | null = null;
+
+function renderDesign() {
   designView.innerHTML = "";
-  if (!levels || levels.length === 0) {
-    designView.innerHTML = `<p class="muted">No design levels were produced.</p>`;
-    return;
-  }
-
-  // Fixed level selector + a single scrolling panel showing one level.
   const nav = document.createElement("div");
   nav.className = "level-nav";
-  const content = document.createElement("div");
-  content.className = "level-content";
-
-  const show = async (i: number) => {
-    designLevelIndex = i;
-    nav.querySelectorAll("button").forEach((b, idx) =>
-      b.classList.toggle("active", idx === i),
-    );
-    const lvl = levels[i];
-    const inner = document.createElement("div");
-    inner.className = "level-content-inner";
-    inner.innerHTML =
-      `<h3 class="level-content-title">${escapeHtml(lvl.title)}</h3>` +
-      (marked.parse(lvl.content || "") as string);
-
-    // Diagrams tagged for this level render inline beneath the prose.
-    const forLevel = (diagrams || []).filter((d) => d.level === lvl.level);
-    let wrap: HTMLElement | null = null;
-    if (forLevel.length) {
-      wrap = document.createElement("div");
-      wrap.className = "level-diagrams";
-      const h = document.createElement("h4");
-      h.className = "level-diagrams-title";
-      h.textContent = forLevel.length > 1 ? "Diagrams for this level" : "Diagram for this level";
-      wrap.appendChild(h);
-      inner.appendChild(wrap);
-    }
-
-    content.innerHTML = "";
-    content.appendChild(inner);
-    content.scrollTop = 0;
-
-    if (wrap) for (const d of forLevel) await appendDiagramCard(wrap, d, false);
-  };
-
-  levels.forEach((lvl, i) => {
+  LEVELS.forEach((l, i) => {
     const b = document.createElement("button");
-    b.className = `level-tab level-${i}`;
-    b.innerHTML = `<span class="level-num">${i + 1}</span> ${escapeHtml(lvl.level)}`;
-    b.addEventListener("click", () => show(i));
+    b.className = `level-tab level-${i}` + (levelCache[l.key] ? " has-content" : "");
+    b.innerHTML = `<span class="level-num">${i + 1}</span> ${escapeHtml(l.name)}`;
+    b.addEventListener("click", () => {
+      levelIndex = i;
+      showLevel();
+      updateGenerateButton();
+    });
     nav.appendChild(b);
   });
-
+  const content = document.createElement("div");
+  content.className = "level-content";
   designView.appendChild(nav);
   designView.appendChild(content);
-  show(Math.min(designLevelIndex, levels.length - 1));
+  showLevel();
 }
 
-// ---------- Glossary (Terms) ----------
+function showLevel() {
+  if (levelLoadingStop) {
+    levelLoadingStop();
+    levelLoadingStop = null;
+  }
+  const nav = designView.querySelector(".level-nav");
+  const content = designView.querySelector(".level-content") as HTMLElement | null;
+  if (!content) return;
+  nav?.querySelectorAll("button").forEach((b, i) =>
+    b.classList.toggle("active", i === levelIndex),
+  );
+  content.scrollTop = 0;
 
-function renderTerms(terms: Term[]) {
-  termsView.innerHTML = "";
-  if (!terms || terms.length === 0) {
-    termsView.innerHTML = `<p class="muted">No terms were found for this source.</p>`;
+  const l = LEVELS[levelIndex];
+  if (generatingLevel === l.key) {
+    content.innerHTML = "";
+    levelLoadingStop = renderLoading(content, `Generating the ${l.name} level…`);
+    const cancel = document.createElement("button");
+    cancel.className = "cancel-btn";
+    cancel.textContent = "✕ Stop";
+    cancel.addEventListener("click", cancelGeneration);
+    content.querySelector(".loading")?.appendChild(cancel);
     return;
   }
-  for (const t of terms) {
-    const card = document.createElement("div");
-    card.className = "term-card";
-    const cat = t.category
-      ? `<span class="term-cat">${escapeHtml(t.category)}</span>`
-      : "";
-    card.innerHTML = `
-      <div class="term-head"><span class="term-name">${escapeHtml(t.term)}</span>${cat}</div>
-      <p class="term-def">${escapeHtml(t.definition)}</p>`;
-    termsView.appendChild(card);
+  const res = levelCache[l.key];
+  if (!res) {
+    renderLevelPlaceholder(content, l);
+    return;
+  }
+  renderLevelContent(content, res);
+}
+
+function renderLevelPlaceholder(content: HTMLElement, l: { key: string; name: string }) {
+  content.innerHTML = `
+    <div class="generate-prompt">
+      <div class="generate-art">✦</div>
+      <p>The <b>${escapeHtml(l.name)}</b> level isn't generated yet.</p>
+      <button class="generate-btn">✦ Generate ${escapeHtml(l.name)}</button>
+      <p class="hint">Monet asks your local Claude Code to explain this level from
+        the document — with its diagrams inline and key terms you can hover for
+        definitions. Cached after the first run.</p>
+    </div>`;
+  content.querySelector(".generate-btn")!.addEventListener("click", () =>
+    generateLevel(l.key as LevelKey, false),
+  );
+}
+
+async function renderLevelContent(content: HTMLElement, res: LevelResult) {
+  content.innerHTML = "";
+  const inner = document.createElement("div");
+  inner.className = "level-content-inner";
+  inner.innerHTML =
+    `<h3 class="level-content-title">${escapeHtml(res.title)}</h3>` +
+    (marked.parse(res.content || "") as string);
+  annotateTerms(inner, res.terms || []);
+
+  let wrap: HTMLElement | null = null;
+  if (res.diagrams && res.diagrams.length) {
+    wrap = document.createElement("div");
+    wrap.className = "level-diagrams";
+    const h = document.createElement("h4");
+    h.className = "level-diagrams-title";
+    h.textContent = res.diagrams.length > 1 ? "Diagrams for this level" : "Diagram for this level";
+    wrap.appendChild(h);
+    inner.appendChild(wrap);
+  }
+  content.appendChild(inner);
+  if (wrap) for (const d of res.diagrams) await appendDiagramCard(wrap, d);
+}
+
+async function generateLevel(key: LevelKey, force: boolean) {
+  if (!selected || generatingLevel) return;
+  const s = selected;
+  setStatus("");
+  generatingLevel = key;
+  levelIndex = LEVELS.findIndex((l) => l.key === key);
+  showLevel();
+  updateGenerateButton();
+  try {
+    const res = await invoke<LevelResult>("generate_level", {
+      path: s.path,
+      level: key,
+      force,
+      model,
+      lang,
+    });
+    if (selected?.path !== s.path) {
+      generatingLevel = null;
+      return;
+    }
+    levelCache[key] = res;
+    generatingLevel = null;
+    renderDesign(); // refresh nav "has-content" markers + show the level
+    updateGenerateButton();
+  } catch (e) {
+    if (selected?.path !== s.path) {
+      generatingLevel = null;
+      return;
+    }
+    generatingLevel = null;
+    showLevel(); // back to placeholder
+    updateGenerateButton();
+    setStatus(String(e), "error");
+  }
+}
+
+async function cancelGeneration() {
+  try {
+    await invoke("cancel_generation");
+  } catch {
+    /* the in-flight generate promise reports the outcome */
+  }
+}
+
+// ---------- Inline term annotations (hover-to-define) ----------
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Wrap the first occurrence of each term in the prose with a hover anchor. */
+function annotateTerms(root: HTMLElement, terms: Term[]) {
+  const sorted = [...terms]
+    .filter((t) => t.term && t.definition)
+    .sort((a, b) => b.term.length - a.term.length);
+  for (const t of sorted) {
+    const re = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(t.term)}(?![A-Za-z0-9])`, "i");
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !re.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
+        const p = (node as Text).parentElement;
+        if (!p || p.closest("code, pre, a, .term-anchor")) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const node = walker.nextNode() as Text | null;
+    if (!node) continue;
+    const m = re.exec(node.nodeValue!);
+    if (!m) continue;
+    const matched = node.splitText(m.index);
+    matched.splitText(m[0].length);
+    const span = document.createElement("span");
+    span.className = "term-anchor";
+    span.textContent = matched.nodeValue;
+    span.dataset.term = t.term;
+    span.dataset.def = t.definition;
+    matched.parentNode!.replaceChild(span, matched);
+  }
+}
+
+let termPopover: HTMLElement | null = null;
+
+function showTermPopover(anchor: HTMLElement) {
+  hideTermPopover();
+  const pop = document.createElement("div");
+  pop.className = "term-popover";
+  pop.innerHTML = `<div class="term-popover-name">${escapeHtml(anchor.dataset.term || "")}</div>
+    <div class="term-popover-def">${escapeHtml(anchor.dataset.def || "")}</div>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(12, Math.min(r.left, window.innerWidth - pop.offsetWidth - 12))}px`;
+  const below = r.bottom + 6;
+  pop.style.top =
+    below + pop.offsetHeight > window.innerHeight - 8
+      ? `${r.top - pop.offsetHeight - 6}px`
+      : `${below}px`;
+  termPopover = pop;
+}
+
+function hideTermPopover() {
+  termPopover?.remove();
+  termPopover = null;
+}
+
+// ---------- Ask tab (multi-turn Q&A over the source) ----------
+
+function renderAsk() {
+  askView.innerHTML = `
+    <div class="ask-thread" id="ask-thread"></div>
+    <form class="ask-input" id="ask-form">
+      <textarea id="ask-q" rows="1" placeholder="Ask about this source…"></textarea>
+      <button type="submit" class="ghost-btn" id="ask-send">Ask</button>
+    </form>`;
+  renderAskThread();
+  const form = askView.querySelector("#ask-form") as HTMLFormElement;
+  const ta = askView.querySelector("#ask-q") as HTMLTextAreaElement;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = ta.value.trim();
+    if (q) {
+      ta.value = "";
+      sendAsk(q);
+    }
+  });
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+}
+
+function renderAskThread() {
+  const thread = askView.querySelector("#ask-thread") as HTMLElement | null;
+  if (!thread) return;
+  if (askHistory.length === 0 && !asking) {
+    thread.innerHTML = `<p class="muted">Ask follow-up questions about this source.
+      Monet answers using the document as context and remembers the conversation.</p>`;
+    return;
+  }
+  thread.innerHTML = "";
+  for (const turn of askHistory) {
+    const el = document.createElement("div");
+    el.className = `ask-turn ${turn.role}`;
+    el.innerHTML =
+      turn.role === "user"
+        ? escapeHtml(turn.content)
+        : (marked.parse(turn.content) as string);
+    thread.appendChild(el);
+  }
+  if (asking) {
+    const el = document.createElement("div");
+    el.className = "ask-turn assistant pending";
+    el.innerHTML = `<span class="ask-dots"><span></span><span></span><span></span></span>`;
+    thread.appendChild(el);
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function sendAsk(question: string) {
+  if (!selected || asking) return;
+  const s = selected;
+  const history = askHistory.slice(); // prior turns, before this question
+  askHistory.push({ role: "user", content: question });
+  asking = true;
+  renderAskThread();
+  try {
+    const ans = await invoke<string>("ask", {
+      path: s.path,
+      history,
+      question,
+      model,
+      lang,
+    });
+    if (selected?.path !== s.path) return;
+    askHistory.push({ role: "assistant", content: ans });
+  } catch (e) {
+    if (selected?.path === s.path)
+      askHistory.push({ role: "assistant", content: `⚠︎ ${String(e)}` });
+  } finally {
+    if (selected?.path === s.path) {
+      asking = false;
+      renderAskThread();
+    }
   }
 }
 
@@ -680,9 +820,21 @@ async function importLink() {
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
-  // Shared Generate / Regenerate: regenerate (force) when a bundle exists.
-  $("#regen-btn").addEventListener("click", () => generateBundle(!!bundle));
+  // Shared Generate / Regenerate, acting on the current design level.
+  $("#regen-btn").addEventListener("click", () => {
+    const key = LEVELS[levelIndex].key;
+    generateLevel(key, !!levelCache[key]);
+  });
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
+
+  // Hover-to-define term anchors inside the design content.
+  designView.addEventListener("mouseover", (e) => {
+    const a = (e.target as HTMLElement).closest(".term-anchor");
+    if (a) showTermPopover(a as HTMLElement);
+  });
+  designView.addEventListener("mouseout", (e) => {
+    if ((e.target as HTMLElement).closest(".term-anchor")) hideTermPopover();
+  });
   $("#refresh-source-btn").addEventListener("click", async () => {
     if (!selected) return;
     try {
@@ -709,6 +861,8 @@ function wireUi() {
       lang = (b as HTMLElement).dataset.lang as Lang;
       localStorage.setItem("bp-lang", lang);
       updateLangUI();
+      // Generated content is cached per language — reload the selected source.
+      if (selected) selectSession(selected);
     });
   });
 

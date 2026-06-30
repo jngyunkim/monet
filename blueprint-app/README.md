@@ -1,18 +1,19 @@
 # Monet
 
-Turn Claude Code design/architecture sessions — and external design docs — into
-diagrams, a layered design walkthrough, and a contextual glossary.
+Walk through Claude Code design/architecture sessions — and external design
+docs — level by level, with inline diagrams, hover-to-define terms, and a
+follow-up Q&A.
 
 Pick a source and Monet asks your **local** Claude Code CLI (`claude -p`,
-headless) to read it **once** and produce, in a single pass:
+headless) to explain it, **one level at a time, on demand**:
 
-- **Diagrams** — `mermaid` for flows/sequences/relationships, plus
-  `mingrammer/diagrams` for cloud/infra topology when appropriate.
-- **Design** — the document split into **High-level → Detailed →
-  Implementation**, viewed one level at a time, strictly grounded in what the
-  document actually says (it won't invent specifics).
-- **Terms** — a glossary of the technical terms, defined in this document's
-  context.
+- **Design** — the document at **High-level → Detailed → Implementation**, each
+  level generated independently. A level brings its own inline diagrams
+  (`mermaid`, or `mingrammer/diagrams` for cloud/infra topology) and highlights
+  its key terms — hover any term for an in-context definition. Strictly grounded
+  in what the document says (it won't invent specifics).
+- **Ask** — a multi-turn Q&A that answers follow-up questions using the source
+  as context.
 
 No API keys: it reuses your existing Claude Code authentication.
 
@@ -22,17 +23,18 @@ No API keys: it reuses your existing Claude Code authentication.
 Tauri app
   webview (UI)  <-- IPC -->  Rust backend
    · source list              · scan ~/.claude/projects, parse JSONL
-   · mermaid rendering         · resolve source text (session JSONL, or
-   · infra SVG display           link sources fetched via gh / Notion connector)
-   · one-at-a-time design      · claude -p  → ONE JSON bundle
+   · per-level design          · resolve source text (session JSONL, or
+   · mermaid + term anchors      link sources fetched via gh / Notion connector)
+   · Ask thread                · claude -p per level / per question
    · transcript / source       · python3 + graphviz (mingrammer render)
                                · disk cache (keyed by source path + mtime + lang)
 ```
 
-A **single** `claude -p` call returns one JSON bundle (`levels` + `diagrams` +
-`terms`), so a large source is read only once and the three tabs stay mutually
-consistent. Each diagram is tagged with the design level it illustrates, and the
-Design tab shows those diagrams inline beneath the matching level.
+Each design level is a separate, cached `claude -p` call (prose + that level's
+diagrams + terms), so you only generate what you want and each call stays small.
+Generations are **cancellable** (the headless `claude` child is killed) and have
+a hard timeout. Mermaid that fails to parse is sent back to `claude` once for an
+automatic repair before falling back to showing the source.
 
 ## Requirements
 
@@ -66,17 +68,17 @@ npm run tauri build
 
 ## Tabs
 
-- **Diagrams** — gallery of mermaid (+ optional mingrammer infra) diagrams, each
-  with a level badge; expand any diagram to a lightbox.
-- **Design** — High-level → Detailed → Implementation, one level at a time, with
-  that level's diagrams inline.
-- **Terms** — contextual technical glossary.
+- **Design** — High-level → Detailed → Implementation, one level at a time. Each
+  level has its own **Generate** button (→ **Regenerate** once cached, shared
+  with the header button); generation can be **stopped**. Diagrams render inline
+  (expand to a lightbox); key terms are underlined and show a definition on
+  hover.
+- **Ask** — multi-turn questions about the source.
 - **Transcript / Source** — the extracted session transcript, or (for link
   sources) the fetched source content.
 
-One **Generate** button (in the header and in each empty tab) produces all three
-at once; once a bundle is cached it becomes **Regenerate**. Results are cached by
-source path + mtime, namespaced per language.
+Each level is cached by source path + mtime, namespaced per level **and**
+language.
 
 ## Settings
 
@@ -88,10 +90,12 @@ source path + mtime, namespaced per language.
 - `src-tauri/src/session.rs` — scan + JSONL parse + transcript extraction
 - `src-tauri/src/imported.rs` — link sources: `.links.json` manifests, dynamic
   fetch (gh / Notion connector) → cached `.fetched.md`
-- `src-tauri/src/bundle.rs` — the single combined generation (levels + diagrams
+- `src-tauri/src/level.rs` — per-level generation (prose + that level's diagrams
   + terms): prompt, parse, mingrammer render
-- `src-tauri/src/diagram.rs` — `claude` invocation, mingrammer render, dep check
-- `src-tauri/src/design.rs` / `glossary.rs` — the `Level` / `Term` types
+- `src-tauri/src/ask.rs` — multi-turn Q&A over the source
+- `src-tauri/src/diagram.rs` — `claude` invocation (cancellable + timeout),
+  mermaid repair, mingrammer render, dep check
+- `src-tauri/src/glossary.rs` — the `Term` type
 - `src-tauri/src/cache.rs` — artifact cache (namespace + path + mtime key)
 - `src-tauri/src/util.rs` — binary discovery, isolated work dir, language clause
 - `src/main.ts` — UI
@@ -110,7 +114,7 @@ To cut a release:
 
 ```bash
 # bump version in src-tauri/tauri.conf.json + package.json, then:
-git tag v0.1.13 && git push origin v0.1.13
+git tag v0.1.14 && git push origin v0.1.14
 ```
 
 The `.github/workflows/release.yml` workflow builds on a macOS runner, signs the

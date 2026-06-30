@@ -45,9 +45,10 @@
       <main id="main">
         <div id="empty-state" class="empty-state">
           <div class="empty-art">✻</div>
-          <h2>Visualize a design session</h2>
-          <p>Pick a session on the left. Monet asks your local Claude Code to
-            turn the discussion into diagrams and a glossary.</p>
+          <h2>Walk through a design</h2>
+          <p>Pick a source on the left. Monet asks your local Claude Code to
+            explain it level by level — with inline diagrams and hover-over term
+            definitions — and lets you ask follow-up questions.</p>
         </div>
 
         <section id="viewer" class="viewer hidden">
@@ -72,16 +73,14 @@
           </header>
 
           <nav class="tabbar">
-            <button class="tab active" data-view="diagrams">Diagrams</button>
-            <button class="tab" data-view="design">Design</button>
-            <button class="tab" data-view="terms">Terms</button>
+            <button class="tab active" data-view="design">Design</button>
+            <button class="tab" data-view="ask">Ask</button>
             <button id="tab-transcript" class="tab" data-view="transcript">Transcript</button>
           </nav>
 
           <div id="status-bar" class="status-bar hidden"></div>
-          <div id="diagrams-view" class="content-view diagrams-view"></div>
-          <div id="design-view" class="content-view design-view hidden"></div>
-          <div id="terms-view" class="content-view terms-view hidden"></div>
+          <div id="design-view" class="content-view design-view"></div>
+          <div id="ask-view" class="content-view ask-view hidden"></div>
           <pre id="transcript-view" class="content-view transcript-view hidden"></pre>
         </section>
       </main>
