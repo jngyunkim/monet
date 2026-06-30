@@ -1,9 +1,8 @@
 mod cache;
-mod config;
 mod design;
 mod diagram;
 mod glossary;
-mod notion;
+mod imported;
 mod session;
 mod util;
 
@@ -34,7 +33,7 @@ fn resolve_model(model: Option<String>) -> String {
 async fn list_sessions() -> Vec<SessionMeta> {
     tauri::async_runtime::spawn_blocking(|| {
         let mut all = session::list_sessions();
-        all.extend(notion::list_sources());
+        all.extend(imported::list_sources());
         all.sort_by(|a, b| b.modified.cmp(&a.modified));
         all
     })
@@ -188,34 +187,15 @@ async fn generate_design(
     .map_err(|e| e.to_string())?
 }
 
-// ---------- Settings & Notion ----------
+// ---------- Imported link sources ----------
 
+/// Fetch a GitHub / Notion / web link by delegating to the local Claude CLI
+/// (gh + WebFetch), saving it as a local source. No API keys required.
 #[tauri::command]
-async fn has_notion_token() -> bool {
-    tauri::async_runtime::spawn_blocking(|| !config::load().notion_token.trim().is_empty())
+async fn import_link(url: String) -> Result<SessionMeta, String> {
+    tauri::async_runtime::spawn_blocking(move || imported::import(&url))
         .await
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-async fn set_notion_token(token: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut cfg = config::load();
-        cfg.notion_token = token.trim().to_string();
-        config::save(&cfg)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn import_notion(url: String) -> Result<SessionMeta, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let token = config::load().notion_token;
-        notion::import(&url, &token)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?
 }
 
 /// Resolve `path` to a canonical path, rejecting anything that does not live
@@ -244,7 +224,7 @@ async fn delete_session(path: String) -> Result<(), String> {
             .map(|h| h.join(".claude").join("projects"))
             .ok_or("could not resolve home directory")?;
         let canonical = resolve_within(&path, &projects)
-            .or_else(|_| resolve_within(&path, &notion::sources_dir()))
+            .or_else(|_| resolve_within(&path, &imported::sources_dir()))
             .map_err(|_| {
                 "refusing to delete a file outside the session or Notion source folders"
                     .to_string()
@@ -294,9 +274,7 @@ pub fn run() {
             generate_glossary,
             cached_design,
             generate_design,
-            has_notion_token,
-            set_notion_token,
-            import_notion,
+            import_link,
             delete_session
         ])
         .run(tauri::generate_context!())

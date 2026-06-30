@@ -11,7 +11,7 @@
   <body>
     <div id="app">
       <aside id="sidebar">
-        <header class="sidebar-header">
+        <header class="sidebar-header" data-tauri-drag-region>
           <div class="brand">
             <span class="brand-mark">✻</span>
             <h1>Blueprint</h1>
@@ -24,7 +24,7 @@
           <input id="filter-input" placeholder="Filter sessions" />
         </div>
 
-        <button id="notion-import-btn" class="notion-import">+ Import from Notion</button>
+        <button id="import-link-btn" class="notion-import">+ Import from link</button>
 
         <div id="session-list"></div>
 
@@ -46,7 +46,7 @@
         </div>
 
         <section id="viewer" class="viewer hidden">
-          <header class="viewer-header">
+          <header class="viewer-header" data-tauri-drag-region>
             <div class="viewer-title">
               <h2 id="viewer-title">—</h2>
               <span id="viewer-sub" class="viewer-sub"></span>
@@ -104,33 +104,23 @@
             <button data-lang="ko">한국어</button>
           </div>
         </div>
-
-        <div class="setting">
-          <label>Notion API token</label>
-          <p class="setting-hint">Create an internal integration at
-            notion.so/my-integrations, share the pages you want with it, then
-            paste the token. Stored locally on this machine.</p>
-          <input id="notion-token" type="password" placeholder="ntn_… / secret_…" />
-          <div class="setting-actions">
-            <button id="notion-save" class="ghost-btn">Save token</button>
-            <span id="notion-save-status" class="save-status"></span>
-          </div>
-        </div>
       </div>
     </div>
 
-    <div id="notion-modal" class="modal hidden">
+    <div id="import-modal" class="modal hidden">
       <div class="modal-card">
         <div class="modal-head">
-          <h2>Import from Notion</h2>
-          <button id="notion-modal-close" class="icon-btn" title="Close">✕</button>
+          <h2>Import from link</h2>
+          <button id="import-modal-close" class="icon-btn" title="Close">✕</button>
         </div>
         <div class="setting">
-          <label>Notion page URL</label>
-          <input id="notion-url" type="text" placeholder="https://www.notion.so/…" />
+          <label>GitHub or Notion URL</label>
+          <p class="setting-hint">Blueprint asks your local Claude Code to fetch
+            it (GitHub via the gh CLI, others via web). No API keys needed.</p>
+          <input id="import-url" type="text" placeholder="https://github.com/… or https://notion.so/…" />
           <div class="setting-actions">
-            <button id="notion-import-go" class="ghost-btn">Import</button>
-            <span id="notion-import-status" class="save-status"></span>
+            <button id="import-go" class="ghost-btn">Import</button>
+            <span id="import-status" class="save-status"></span>
           </div>
         </div>
       </div>

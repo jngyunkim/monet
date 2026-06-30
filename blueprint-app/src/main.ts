@@ -677,38 +677,21 @@ function updateLangUI() {
   });
 }
 
-async function openSettings() {
+function openSettings() {
   updateLangUI();
-  const has = await invoke<boolean>("has_notion_token");
-  const tokenInput = $<HTMLInputElement>("#notion-token");
-  tokenInput.value = "";
-  tokenInput.placeholder = has ? "•••••••••• (saved — paste to replace)" : "ntn_… / secret_…";
-  $("#notion-save-status").textContent = "";
   $("#settings-modal").classList.remove("hidden");
 }
 
-async function saveNotionToken() {
-  const token = $<HTMLInputElement>("#notion-token").value.trim();
-  if (!token) return;
-  try {
-    await invoke("set_notion_token", { token });
-    $("#notion-save-status").textContent = "Saved ✓";
-    $<HTMLInputElement>("#notion-token").value = "";
-  } catch (e) {
-    $("#notion-save-status").textContent = String(e);
-  }
-}
-
-async function importNotion() {
-  const url = $<HTMLInputElement>("#notion-url").value.trim();
-  const status = $("#notion-import-status");
+async function importLink() {
+  const url = $<HTMLInputElement>("#import-url").value.trim();
+  const status = $("#import-status");
   if (!url) return;
-  status.textContent = "Importing…";
+  status.textContent = "Fetching via Claude Code… (can take a moment)";
   try {
-    const meta = await invoke<SessionMeta>("import_notion", { url });
+    const meta = await invoke<SessionMeta>("import_link", { url });
     status.textContent = "";
-    $("#notion-modal").classList.add("hidden");
-    $<HTMLInputElement>("#notion-url").value = "";
+    $("#import-modal").classList.add("hidden");
+    $<HTMLInputElement>("#import-url").value = "";
     await refreshSessions();
     selectSession(meta);
   } catch (e) {
@@ -751,16 +734,15 @@ function wireUi() {
   $("#settings-close").addEventListener("click", () =>
     $("#settings-modal").classList.add("hidden"),
   );
-  $("#notion-save").addEventListener("click", saveNotionToken);
 
-  // Notion import modal
-  $("#notion-import-btn").addEventListener("click", () =>
-    $("#notion-modal").classList.remove("hidden"),
+  // Import-from-link modal
+  $("#import-link-btn").addEventListener("click", () =>
+    $("#import-modal").classList.remove("hidden"),
   );
-  $("#notion-modal-close").addEventListener("click", () =>
-    $("#notion-modal").classList.add("hidden"),
+  $("#import-modal-close").addEventListener("click", () =>
+    $("#import-modal").classList.add("hidden"),
   );
-  $("#notion-import-go").addEventListener("click", importNotion);
+  $("#import-go").addEventListener("click", importLink);
 
   // Backdrop click closes modals
   document.querySelectorAll(".modal").forEach((m) => {

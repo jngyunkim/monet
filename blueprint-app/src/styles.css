@@ -79,7 +79,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 16px 10px;
+  /* Extra top padding clears the macOS traffic-light overlay buttons. */
+  padding: 36px 14px 10px;
 }
 .brand {
   display: flex;
@@ -475,6 +476,7 @@ button {
 
 .content-view {
   flex: 1;
+  min-height: 0; /* allow the flex child to shrink so overflow-y can scroll */
   overflow-y: auto;
   padding: 20px 22px;
 }
