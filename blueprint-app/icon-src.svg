@@ -1,0 +1,20 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- one arm: a round bulb whose neck flows tangentially into it,
+         joined to neighbours by smooth concave valleys -->
+    <path id="arm" d="M458 418.47 C526.54 378.9 442.79 300.73 432.66 222.24 A80 80 0 1 1 591.34 222.24 C581.21 300.73 497.46 378.9 566 418.47 L512 512 Z"/>
+  </defs>
+
+  <!-- app background = current app background colour -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" fill="#f7f6f4"/>
+
+  <!-- ✻ brand mark -->
+  <g fill="#d8b0a6">
+    <use href="#arm" transform="rotate(0 512 512)"/>
+    <use href="#arm" transform="rotate(60 512 512)"/>
+    <use href="#arm" transform="rotate(120 512 512)"/>
+    <use href="#arm" transform="rotate(180 512 512)"/>
+    <use href="#arm" transform="rotate(240 512 512)"/>
+    <use href="#arm" transform="rotate(300 512 512)"/>
+  </g>
+</svg>

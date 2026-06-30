@@ -284,7 +284,7 @@ function showGeneratePrompt(s: SessionMeta) {
   wrap.innerHTML = `
     <p>No diagrams generated for this session yet.</p>
     <button class="generate-btn">✦ Generate Diagrams</button>
-    <p class="hint">Blueprint asks your local Claude Code to read the design
+    <p class="hint">Monet asks your local Claude Code to read the design
       discussion and draw it. The result is cached, so it only runs once.</p>`;
   wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
     loadDiagrams(s, false),
@@ -459,7 +459,7 @@ function showDesignPrompt(s: SessionMeta) {
   wrap.innerHTML = `
     <p>No layered design view generated yet.</p>
     <button class="generate-btn">✦ Generate Design Levels</button>
-    <p class="hint">Blueprint breaks the document into High-level → Detailed →
+    <p class="hint">Monet breaks the document into High-level → Detailed →
       Implementation, strictly from what the document actually says.</p>`;
   wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
     loadDesign(s, false),
@@ -561,7 +561,7 @@ function showGlossaryPrompt(s: SessionMeta) {
   wrap.innerHTML = `
     <p>No glossary generated for this session yet.</p>
     <button class="generate-btn">✦ Generate Glossary</button>
-    <p class="hint">Blueprint asks your local Claude Code to collect the technical
+    <p class="hint">Monet asks your local Claude Code to collect the technical
       terms from this session and explain each one in context. Cached after first run.</p>`;
   wrap.querySelector(".generate-btn")!.addEventListener("click", () =>
     loadGlossary(s, false),
