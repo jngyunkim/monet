@@ -92,12 +92,20 @@ pub fn run_claude(prompt: &str, model: &str) -> Result<String, String> {
         "Claude Code CLI ('claude') not found. Install it and make sure it is on your PATH."
             .to_string()
     })?;
+    // This is a pure text-in / JSON-out task, so we strip the full Claude Code
+    // environment: no MCP servers, no user/project settings or hooks, and a
+    // minimal system prompt. That trims startup overhead and token cost.
     let mut child = Command::new(&bin)
         .arg("-p")
         .arg("--output-format")
         .arg("json")
         .arg("--model")
         .arg(model)
+        .arg("--strict-mcp-config")
+        .arg("--setting-sources")
+        .arg("")
+        .arg("--system-prompt")
+        .arg("You are a strict JSON generator. Respond with ONLY a single valid JSON object matching the schema described in the user's message. Never add markdown code fences, prose, commentary, or conversation before or after the JSON.")
         .env("PATH", augmented_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

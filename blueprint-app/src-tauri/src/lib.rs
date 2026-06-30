@@ -10,6 +10,15 @@ use session::SessionMeta;
 
 const DEFAULT_MODEL: &str = "sonnet";
 
+/// Only allow the three speed/quality tiers the UI exposes; fall back to the
+/// default for anything unexpected.
+fn resolve_model(model: Option<String>) -> String {
+    match model.as_deref() {
+        Some("haiku") | Some("sonnet") | Some("opus") => model.unwrap(),
+        _ => DEFAULT_MODEL.to_string(),
+    }
+}
+
 #[tauri::command]
 async fn list_sessions() -> Vec<SessionMeta> {
     tauri::async_runtime::spawn_blocking(session::list_sessions)
@@ -50,7 +59,12 @@ async fn cached_diagrams(path: String) -> Option<DiagramSet> {
 }
 
 #[tauri::command]
-async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, String> {
+async fn generate_diagrams(
+    path: String,
+    force: bool,
+    model: Option<String>,
+) -> Result<DiagramSet, String> {
+    let model = resolve_model(model);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
         if !force {
@@ -62,7 +76,7 @@ async fn generate_diagrams(path: String, force: bool) -> Result<DiagramSet, Stri
         if transcript.trim().is_empty() {
             return Err("This session has no readable conversation text.".to_string());
         }
-        let set = diagram::generate(&transcript, DEFAULT_MODEL)?;
+        let set = diagram::generate(&transcript, &model)?;
         cache::save("diagrams", &path, mtime, &set);
         Ok(set)
     })
@@ -83,7 +97,12 @@ async fn cached_glossary(path: String) -> Option<GlossarySet> {
 }
 
 #[tauri::command]
-async fn generate_glossary(path: String, force: bool) -> Result<GlossarySet, String> {
+async fn generate_glossary(
+    path: String,
+    force: bool,
+    model: Option<String>,
+) -> Result<GlossarySet, String> {
+    let model = resolve_model(model);
     tauri::async_runtime::spawn_blocking(move || {
         let mtime = cache::mtime_of(&path);
         if !force {
@@ -95,7 +114,7 @@ async fn generate_glossary(path: String, force: bool) -> Result<GlossarySet, Str
         if transcript.trim().is_empty() {
             return Err("This session has no readable conversation text.".to_string());
         }
-        let set = glossary::generate(&transcript, DEFAULT_MODEL)?;
+        let set = glossary::generate(&transcript, &model)?;
         cache::save("glossary", &path, mtime, &set);
         Ok(set)
     })

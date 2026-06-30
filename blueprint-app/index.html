@@ -12,23 +12,32 @@
     <div id="app">
       <aside id="sidebar">
         <header class="sidebar-header">
-          <h1>Blueprint</h1>
-          <button id="refresh-btn" title="Reload session list">⟳</button>
+          <div class="brand">
+            <span class="brand-mark">✻</span>
+            <h1>Blueprint</h1>
+          </div>
+          <button id="refresh-btn" class="icon-btn" title="Reload session list">⟳</button>
         </header>
-        <input id="filter-input" placeholder="Filter sessions..." />
+
+        <div class="search">
+          <span class="search-icon">⌕</span>
+          <input id="filter-input" placeholder="Filter sessions" />
+        </div>
+
         <div id="session-list"></div>
-        <div id="dep-status" class="dep-status"></div>
+
         <div class="sidebar-footer">
+          <div id="dep-status" class="dep-status"></div>
           <button id="update-btn" title="Check for updates">Check for updates</button>
         </div>
       </aside>
 
       <main id="main">
         <div id="empty-state" class="empty-state">
-          <div class="empty-art">▦</div>
-          <p>Pick a session on the left to visualize its architecture.</p>
-          <p class="hint">Blueprint asks your local Claude Code to turn the
-            design discussion into diagrams.</p>
+          <div class="empty-art">✻</div>
+          <h2>Visualize a design session</h2>
+          <p>Pick a session on the left. Blueprint asks your local Claude Code to
+            turn the discussion into diagrams and a glossary.</p>
         </div>
 
         <section id="viewer" class="viewer hidden">
@@ -38,21 +47,39 @@
               <span id="viewer-sub" class="viewer-sub"></span>
             </div>
             <div class="viewer-actions">
-              <div class="tabs">
-                <button class="tab active" data-view="diagrams">Diagrams</button>
-                <button class="tab" data-view="terms">Terms</button>
-                <button class="tab" data-view="transcript">Transcript</button>
+              <div
+                class="model-select"
+                id="model-select"
+                title="Generation model — Fast is ~2× quicker, Best is highest quality"
+              >
+                <button data-model="haiku">Fast</button>
+                <button data-model="sonnet">Balanced</button>
+                <button data-model="opus">Best</button>
               </div>
-              <button id="regen-btn" title="Regenerate diagrams">Regenerate</button>
+              <button id="regen-btn" class="ghost-btn" title="Regenerate">↻ Regenerate</button>
             </div>
           </header>
 
+          <nav class="tabbar">
+            <button class="tab active" data-view="diagrams">Diagrams</button>
+            <button class="tab" data-view="terms">Terms</button>
+            <button class="tab" data-view="transcript">Transcript</button>
+          </nav>
+
           <div id="status-bar" class="status-bar hidden"></div>
-          <div id="diagrams-view" class="diagrams-view"></div>
-          <div id="terms-view" class="terms-view hidden"></div>
-          <pre id="transcript-view" class="transcript-view hidden"></pre>
+          <div id="diagrams-view" class="content-view diagrams-view"></div>
+          <div id="terms-view" class="content-view terms-view hidden"></div>
+          <pre id="transcript-view" class="content-view transcript-view hidden"></pre>
         </section>
       </main>
+    </div>
+
+    <div id="lightbox" class="lightbox hidden">
+      <div class="lightbox-bar">
+        <span id="lightbox-title"></span>
+        <button id="lightbox-close" class="icon-btn" title="Close">✕</button>
+      </div>
+      <div id="lightbox-body" class="lightbox-body"></div>
     </div>
   </body>
 </html>

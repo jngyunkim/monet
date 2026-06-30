@@ -41,6 +41,19 @@ let currentView: "diagrams" | "terms" | "transcript" = "diagrams";
 let hasDiagrams = false;
 let hasGlossary = false;
 let termsLoadedForPath: string | null = null;
+const collapsedGroups = new Set<string>();
+
+type Model = "haiku" | "sonnet" | "opus";
+const MODEL_LABELS: Record<Model, string> = {
+  haiku: "Fast",
+  sonnet: "Balanced",
+  opus: "Best",
+};
+const savedModel = localStorage.getItem("bp-model");
+let model: Model =
+  savedModel === "haiku" || savedModel === "sonnet" || savedModel === "opus"
+    ? savedModel
+    : "sonnet";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -88,9 +101,25 @@ function renderSessionList() {
   }
 
   for (const [project, items] of groups) {
+    const collapsed = collapsedGroups.has(project);
     const groupEl = document.createElement("div");
-    groupEl.className = "session-group";
-    groupEl.innerHTML = `<div class="group-label">${escapeHtml(project)}</div>`;
+    groupEl.className = "session-group" + (collapsed ? " collapsed" : "");
+
+    const label = document.createElement("button");
+    label.className = "group-label";
+    label.innerHTML = `
+      <span class="group-caret">▼</span>
+      <span>${escapeHtml(project)}</span>
+      <span class="group-count">${items.length}</span>`;
+    label.addEventListener("click", () => {
+      if (collapsedGroups.has(project)) collapsedGroups.delete(project);
+      else collapsedGroups.add(project);
+      renderSessionList();
+    });
+    groupEl.appendChild(label);
+
+    const itemsEl = document.createElement("div");
+    itemsEl.className = "group-items";
     for (const s of items) {
       const item = document.createElement("div");
       item.className =
@@ -114,8 +143,9 @@ function renderSessionList() {
 
       item.appendChild(open);
       item.appendChild(del);
-      groupEl.appendChild(item);
+      itemsEl.appendChild(item);
     }
+    groupEl.appendChild(itemsEl);
     sessionList.appendChild(groupEl);
   }
 }
@@ -163,6 +193,22 @@ function setStatus(msg: string, kind: "info" | "error" | "" = "info") {
   }
   statusBar.textContent = msg;
   statusBar.className = `status-bar ${kind}`;
+}
+
+/** Render a spinner + live elapsed timer into a container. Returns a stop fn. */
+function renderLoading(container: HTMLElement, label: string): () => void {
+  container.innerHTML = `
+    <div class="loading">
+      <div class="spinner"></div>
+      <div class="loading-label">${escapeHtml(label)}</div>
+      <div class="loading-sub">Elapsed <span class="loading-timer">0s</span> · ${MODEL_LABELS[model]} model</div>
+    </div>`;
+  const timerEl = container.querySelector(".loading-timer")!;
+  const start = Date.now();
+  const id = window.setInterval(() => {
+    timerEl.textContent = `${Math.round((Date.now() - start) / 1000)}s`;
+  }, 500);
+  return () => window.clearInterval(id);
 }
 
 async function selectSession(s: SessionMeta) {
@@ -223,25 +269,26 @@ function showGeneratePrompt(s: SessionMeta) {
 }
 
 async function loadDiagrams(s: SessionMeta, force: boolean) {
-  setStatus(
-    force
-      ? "Regenerating diagrams via Claude Code…"
-      : "Generating diagrams via Claude Code… (first run can take ~30s)",
-    "info",
+  setStatus("");
+  const stop = renderLoading(
+    diagramsView,
+    force ? "Regenerating diagrams…" : "Generating diagrams…",
   );
-  diagramsView.innerHTML = "";
   try {
     const set = await invoke<DiagramSet>("generate_diagrams", {
       path: s.path,
       force,
+      model,
     });
+    stop();
     if (selected?.path !== s.path) return; // user switched away
-    setStatus("");
     hasDiagrams = true;
     updateRegenButton();
     await renderDiagrams(set);
   } catch (e) {
+    stop();
     if (selected?.path !== s.path) return;
+    diagramsView.innerHTML = "";
     setStatus(String(e), "error");
   }
 }
@@ -261,7 +308,10 @@ async function renderDiagrams(set: DiagramSet) {
     head.className = "diagram-head";
     head.innerHTML = `
       <h3>${escapeHtml(d.title)}</h3>
-      <button class="src-toggle">&lt;/&gt; source</button>`;
+      <span class="diagram-tools">
+        <button class="mini-btn expand-btn hidden">⤢ Expand</button>
+        <button class="mini-btn src-toggle">&lt;/&gt; Source</button>
+      </span>`;
     card.appendChild(head);
 
     if (d.explanation) {
@@ -286,12 +336,14 @@ async function renderDiagrams(set: DiagramSet) {
 
     diagramsView.appendChild(card);
 
+    let rendered = false;
     if (d.unavailable) {
       body.innerHTML = `<div class="unavailable">⚠︎ ${escapeHtml(d.unavailable)}</div>`;
     } else if (d.kind === "mermaid") {
       try {
         const { svg } = await mermaid.render(`mmd-${i}-${Date.now()}`, d.source);
         body.innerHTML = svg;
+        rendered = true;
       } catch (e) {
         body.innerHTML = `<div class="unavailable">Mermaid render failed: ${escapeHtml(
           String(e),
@@ -300,10 +352,30 @@ async function renderDiagrams(set: DiagramSet) {
       }
     } else if (d.kind === "mingrammer" && d.rendered) {
       body.innerHTML = d.rendered;
+      rendered = true;
     } else {
       body.innerHTML = `<div class="unavailable">Nothing to render.</div>`;
     }
+
+    if (rendered) {
+      const expand = head.querySelector(".expand-btn")!;
+      expand.classList.remove("hidden");
+      expand.addEventListener("click", () => openLightbox(d.title, body.innerHTML));
+    }
   }
+}
+
+// ---------- Lightbox ----------
+
+function openLightbox(title: string, html: string) {
+  $("#lightbox-title").textContent = title;
+  $("#lightbox-body").innerHTML = html;
+  $("#lightbox").classList.remove("hidden");
+}
+
+function closeLightbox() {
+  $("#lightbox").classList.add("hidden");
+  $("#lightbox-body").innerHTML = "";
 }
 
 function switchView(view: "diagrams" | "terms" | "transcript") {
@@ -365,25 +437,26 @@ function showGlossaryPrompt(s: SessionMeta) {
 }
 
 async function loadGlossary(s: SessionMeta, force: boolean) {
-  setStatus(
-    force
-      ? "Regenerating glossary via Claude Code…"
-      : "Building glossary via Claude Code… (first run can take ~30s)",
-    "info",
+  setStatus("");
+  const stop = renderLoading(
+    termsView,
+    force ? "Regenerating glossary…" : "Building glossary…",
   );
-  termsView.innerHTML = "";
   try {
     const set = await invoke<GlossarySet>("generate_glossary", {
       path: s.path,
       force,
+      model,
     });
+    stop();
     if (selected?.path !== s.path) return;
-    setStatus("");
     hasGlossary = true;
     updateRegenButton();
     renderGlossary(set);
   } catch (e) {
+    stop();
     if (selected?.path !== s.path) return;
+    termsView.innerHTML = "";
     setStatus(String(e), "error");
   }
 }
@@ -482,6 +555,12 @@ function showUpdateBanner(update: Update) {
   });
 }
 
+function updateModelUI() {
+  document.querySelectorAll("#model-select button").forEach((b) => {
+    b.classList.toggle("active", (b as HTMLElement).dataset.model === model);
+  });
+}
+
 function wireUi() {
   filterInput.addEventListener("input", renderSessionList);
   $("#refresh-btn").addEventListener("click", refreshSessions);
@@ -493,13 +572,30 @@ function wireUi() {
   $("#update-btn").addEventListener("click", () => checkForUpdates(true));
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () =>
-      switchView((t as HTMLElement).dataset.view as "diagrams" | "transcript"),
+      switchView(
+        (t as HTMLElement).dataset.view as "diagrams" | "terms" | "transcript",
+      ),
     );
+  });
+  document.querySelectorAll("#model-select button").forEach((b) => {
+    b.addEventListener("click", () => {
+      model = (b as HTMLElement).dataset.model as Model;
+      localStorage.setItem("bp-model", model);
+      updateModelUI();
+    });
+  });
+  $("#lightbox-close").addEventListener("click", closeLightbox);
+  $("#lightbox").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeLightbox();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLightbox();
   });
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   wireUi();
+  updateModelUI();
   refreshSessions();
   refreshDeps();
   checkForUpdates(false);
