@@ -37,6 +37,20 @@ fn which_on_path(name: &str) -> bool {
     false
 }
 
+/// An isolated, non-protected working directory for spawned `claude` processes.
+/// Without an explicit cwd, claude treats the inherited directory (which can be
+/// the user's home) as the project and enumerates it — tripping macOS privacy
+/// prompts for Photos, Music, Desktop, etc. Pointing it at an empty cache dir
+/// avoids touching any protected location.
+pub fn work_dir() -> std::path::PathBuf {
+    let d = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("blueprint")
+        .join("work");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
 /// An instruction appended to generation prompts so natural-language output is
 /// written in the user's preferred language. Code, identifiers, and proper
 /// nouns are kept as-is. Empty for English (the model's default here).

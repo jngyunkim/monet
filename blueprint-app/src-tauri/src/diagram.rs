@@ -1,4 +1,4 @@
-use crate::util::{augmented_path, find_bin};
+use crate::util::{augmented_path, find_bin, work_dir};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -106,6 +106,7 @@ pub fn run_claude(prompt: &str, model: &str) -> Result<String, String> {
         .arg("")
         .arg("--system-prompt")
         .arg("You are a strict JSON generator. Respond with ONLY a single valid JSON object matching the schema described in the user's message. Never add markdown code fences, prose, commentary, or conversation before or after the JSON.")
+        .current_dir(work_dir())
         .env("PATH", augmented_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

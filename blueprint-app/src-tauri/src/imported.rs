@@ -1,5 +1,5 @@
 use crate::session::SessionMeta;
-use crate::util::{augmented_path, find_bin};
+use crate::util::{augmented_path, find_bin, work_dir};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -46,10 +46,13 @@ pub fn import(url: &str) -> Result<SessionMeta, String> {
         .arg("--model")
         .arg("sonnet")
         .arg("--strict-mcp-config")
+        .arg("--setting-sources")
+        .arg("")
         .arg("--allowedTools")
         .arg("Bash(gh:*)")
         .arg("WebFetch")
         .arg("Bash(curl:*)")
+        .current_dir(work_dir())
         .env("PATH", augmented_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
