@@ -41,6 +41,16 @@ type Tree = { name: string; content: string; diagrams: Diagram[]; terms: Term[] 
 
 type AskTurn = { role: "user" | "assistant"; content: string };
 
+/** One structured transcript block (session Transcript tab). */
+type Msg = {
+  role: "user" | "assistant";
+  kind: "text" | "thinking" | "tool_use" | "tool_result";
+  text: string;
+  tool?: string;
+  subtitle?: string;
+  is_error: boolean;
+};
+
 type DepStatus = {
   claude: boolean;
   python: boolean;
@@ -95,7 +105,7 @@ const viewerSub = $("#viewer-sub");
 const statusBar = $("#status-bar");
 const designView = $("#design-view");
 const askView = $("#ask-view");
-const transcriptView = $<HTMLPreElement>("#transcript-view");
+const transcriptView = $<HTMLDivElement>("#transcript-view");
 
 function fmtDate(epochSecs: number): string {
   const d = new Date(epochSecs * 1000);
@@ -286,15 +296,68 @@ async function selectSession(s: SessionMeta) {
   renderDesignTab();
   updateGenerateButton();
 
-  // Load the raw transcript/source lazily for the last tab.
-  invoke<string>("get_transcript", { path: s.path })
-    .then((t) => {
-      if (selected?.path === s.path) transcriptView.textContent = t;
-    })
-    .catch((e) => {
-      if (selected?.path === s.path)
-        transcriptView.textContent = `Could not load transcript: ${e}`;
-    });
+  // Last tab: structured messages for sessions, rendered markdown for links.
+  transcriptView.innerHTML = `<p class="muted">Loading…</p>`;
+  if (link) {
+    invoke<string>("get_transcript", { path: s.path })
+      .then((t) => {
+        if (selected?.path === s.path)
+          transcriptView.innerHTML = `<div class="level-content-inner transcript-md">${marked.parse(t) as string}</div>`;
+      })
+      .catch((e) => {
+        if (selected?.path === s.path)
+          transcriptView.innerHTML = `<p class="muted">Could not load source: ${escapeHtml(String(e))}</p>`;
+      });
+  } else {
+    invoke<Msg[]>("get_messages", { path: s.path })
+      .then((msgs) => {
+        if (selected?.path === s.path) renderTranscript(msgs);
+      })
+      .catch((e) => {
+        if (selected?.path === s.path)
+          transcriptView.innerHTML = `<p class="muted">Could not load transcript: ${escapeHtml(String(e))}</p>`;
+      });
+  }
+}
+
+function renderTranscript(blocks: Msg[]) {
+  transcriptView.innerHTML = "";
+  if (!blocks.length) {
+    transcriptView.innerHTML = `<p class="muted">No messages in this session.</p>`;
+    return;
+  }
+  for (const b of blocks) {
+    if (b.kind === "text") {
+      const el = document.createElement("div");
+      el.className = `msg msg-${b.role}`;
+      el.innerHTML =
+        `<div class="msg-role">${b.role === "user" ? "You" : "Claude"}</div>` +
+        `<div class="msg-body">${marked.parse(b.text) as string}</div>`;
+      transcriptView.appendChild(el);
+    } else if (b.kind === "thinking") {
+      const d = document.createElement("details");
+      d.className = "msg-aside msg-thinking";
+      d.innerHTML =
+        `<summary><span class="aside-badge">✻ Thinking</span></summary>` +
+        `<div class="aside-body">${marked.parse(b.text) as string}</div>`;
+      transcriptView.appendChild(d);
+    } else if (b.kind === "tool_use") {
+      const d = document.createElement("details");
+      d.className = "msg-aside msg-tool";
+      const sub = b.subtitle ? `<code class="aside-sub">${escapeHtml(b.subtitle)}</code>` : "";
+      d.innerHTML =
+        `<summary><span class="aside-badge tool">⚙ ${escapeHtml(b.tool || "tool")}</span>${sub}</summary>` +
+        `<pre class="aside-code">${escapeHtml(b.text)}</pre>`;
+      transcriptView.appendChild(d);
+    } else if (b.kind === "tool_result") {
+      const d = document.createElement("details");
+      d.className = "msg-aside msg-result" + (b.is_error ? " error" : "");
+      d.innerHTML =
+        `<summary><span class="aside-badge">${b.is_error ? "⚠ Tool error" : "↳ Tool result"}</span></summary>` +
+        `<pre class="aside-code">${escapeHtml(b.text)}</pre>`;
+      transcriptView.appendChild(d);
+    }
+  }
 }
 
 // ---------- Diagrams (rendered inline inside design levels) ----------

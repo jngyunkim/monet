@@ -206,6 +206,211 @@ fn is_noise(s: &str) -> bool {
         || s.starts_with("<system-reminder>")
 }
 
+/// A single rendered transcript block. `kind` drives per-type UI in the webview.
+#[derive(Serialize, Clone)]
+pub struct Block {
+    /// "user" | "assistant"
+    pub role: String,
+    /// "text" | "thinking" | "tool_use" | "tool_result"
+    pub kind: String,
+    #[serde(default)]
+    pub text: String,
+    /// Tool name (for tool_use).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// Short summary line (command, file path, …) for a collapsible header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    /// True when a tool_result reported an error.
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+const MAX_BLOCK_CHARS: usize = 6000;
+
+fn clamp(s: &str) -> String {
+    if s.chars().count() > MAX_BLOCK_CHARS {
+        let head: String = s.chars().take(MAX_BLOCK_CHARS).collect();
+        format!("{head}\n… (truncated)")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Pull plain text out of a tool_result `content` (string, or array of text blocks).
+fn result_text(content: &Value) -> String {
+    if let Some(s) = content.as_str() {
+        return s.to_string();
+    }
+    if let Some(arr) = content.as_array() {
+        let mut parts = Vec::new();
+        for b in arr {
+            if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                parts.push(t.to_string());
+            }
+        }
+        return parts.join("\n");
+    }
+    String::new()
+}
+
+/// A one-line summary of a tool call's most salient input.
+fn tool_subtitle(tool: &str, input: &Value) -> Option<String> {
+    let pick = |k: &str| input.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
+    let s = match tool {
+        "Bash" => pick("command"),
+        "Read" | "Edit" | "Write" | "NotebookEdit" => pick("file_path"),
+        "Grep" => pick("pattern"),
+        "Glob" => pick("pattern"),
+        "Task" => pick("description"),
+        "WebFetch" => pick("url"),
+        _ => None,
+    }?;
+    let one_line = s.lines().next().unwrap_or(&s);
+    Some(one_line.chars().take(160).collect())
+}
+
+/// Parse a session into structured blocks for the (display-only) Transcript tab.
+/// Unlike `extract_transcript`, this keeps thinking, tool calls, and tool results.
+pub fn extract_blocks(path: &str) -> Vec<Block> {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("isSidechain").and_then(|x| x.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let t = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        let msg_content = v.get("message").and_then(|m| m.get("content"));
+        match t {
+            "user" => {
+                if v.get("isMeta").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    continue;
+                }
+                match msg_content {
+                    Some(Value::String(s)) => {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() && !is_noise(trimmed) {
+                            out.push(Block {
+                                role: "user".into(),
+                                kind: "text".into(),
+                                text: trimmed.to_string(),
+                                tool: None,
+                                subtitle: None,
+                                is_error: false,
+                            });
+                        }
+                    }
+                    Some(Value::Array(arr)) => {
+                        for b in arr {
+                            match b.get("type").and_then(|x| x.as_str()) {
+                                Some("text") => {
+                                    if let Some(txt) = b.get("text").and_then(|x| x.as_str()) {
+                                        let trimmed = txt.trim();
+                                        if !trimmed.is_empty() && !is_noise(trimmed) {
+                                            out.push(Block {
+                                                role: "user".into(),
+                                                kind: "text".into(),
+                                                text: trimmed.to_string(),
+                                                tool: None,
+                                                subtitle: None,
+                                                is_error: false,
+                                            });
+                                        }
+                                    }
+                                }
+                                Some("tool_result") => {
+                                    let content = b.get("content").cloned().unwrap_or(Value::Null);
+                                    let txt = result_text(&content);
+                                    let is_error =
+                                        b.get("is_error").and_then(|x| x.as_bool()).unwrap_or(false);
+                                    out.push(Block {
+                                        role: "user".into(),
+                                        kind: "tool_result".into(),
+                                        text: clamp(txt.trim()),
+                                        tool: None,
+                                        subtitle: None,
+                                        is_error,
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "assistant" => {
+                if let Some(Value::Array(arr)) = msg_content {
+                    for b in arr {
+                        match b.get("type").and_then(|x| x.as_str()) {
+                            Some("text") => {
+                                if let Some(txt) = b.get("text").and_then(|x| x.as_str()) {
+                                    if !txt.trim().is_empty() {
+                                        out.push(Block {
+                                            role: "assistant".into(),
+                                            kind: "text".into(),
+                                            text: txt.trim().to_string(),
+                                            tool: None,
+                                            subtitle: None,
+                                            is_error: false,
+                                        });
+                                    }
+                                }
+                            }
+                            Some("thinking") => {
+                                let txt = b
+                                    .get("thinking")
+                                    .or_else(|| b.get("text"))
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("");
+                                if !txt.trim().is_empty() {
+                                    out.push(Block {
+                                        role: "assistant".into(),
+                                        kind: "thinking".into(),
+                                        text: clamp(txt.trim()),
+                                        tool: None,
+                                        subtitle: None,
+                                        is_error: false,
+                                    });
+                                }
+                            }
+                            Some("tool_use") => {
+                                let name = b
+                                    .get("name")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("tool")
+                                    .to_string();
+                                let input = b.get("input").cloned().unwrap_or(Value::Null);
+                                let subtitle = tool_subtitle(&name, &input);
+                                let pretty = serde_json::to_string_pretty(&input)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                out.push(Block {
+                                    role: "assistant".into(),
+                                    kind: "tool_use".into(),
+                                    text: clamp(&pretty),
+                                    tool: Some(name),
+                                    subtitle,
+                                    is_error: false,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn user_text(v: &Value) -> Option<String> {
     let content = v.get("message")?.get("content")?;
     if let Some(s) = content.as_str() {

@@ -59,6 +59,21 @@ async fn get_transcript(path: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Structured messages for the (display-only) Transcript tab. Empty for link /
+/// markdown sources, which the UI renders from `get_transcript` instead.
+#[tauri::command]
+async fn get_messages(path: String) -> Vec<session::Block> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if imported::is_link_source(&path) || path.ends_with(".md") {
+            Vec::new()
+        } else {
+            session::extract_blocks(&path)
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
 #[tauri::command]
 async fn check_deps() -> DepStatus {
     tauri::async_runtime::spawn_blocking(diagram::check_deps)
@@ -286,6 +301,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_sessions,
             get_transcript,
+            get_messages,
             check_deps,
             cached_forest,
             generate_forest,
