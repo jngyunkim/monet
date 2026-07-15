@@ -26,10 +26,10 @@ jobs:
       - name: Cache cargo
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: blueprint-app/src-tauri
+          workspaces: monet-app/src-tauri
 
       - name: Install frontend dependencies
-        working-directory: blueprint-app
+        working-directory: monet-app
         run: npm ci
 
       # Import our stable self-signed code-signing cert into a dedicated keychain
@@ -73,7 +73,7 @@ jobs:
           # APPLE_CERTIFICATE here — that would trigger a second, untrusted import).
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
-          projectPath: blueprint-app
+          projectPath: monet-app
           tagName: ${{ github.ref_name }}
           releaseName: "Monet ${{ github.ref_name }}"
           releaseBody: "Download the .dmg to install. Existing installs update in-app."

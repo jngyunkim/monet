@@ -124,5 +124,5 @@ update with the private key (repo secrets `TAURI_SIGNING_PRIVATE_KEY` /
 tarball + `.sig`, and `latest.json`. Running apps then see the update on launch
 or via "Check for updates".
 
-> The signing key lives at `~/.tauri/blueprint_updater.key` (keep it safe — it
+> The signing key lives at `~/.tauri/monet_updater.key` (keep it safe — it
 > is **not** in the repo). The matching public key is in `tauri.conf.json`.

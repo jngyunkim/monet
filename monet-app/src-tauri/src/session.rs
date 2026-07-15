@@ -113,10 +113,14 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     // those invocations as regular sessions too, but they contain Monet's own
     // generation prompts rather than a user's development conversation.
     let internal_work_dir = crate::util::work_dir();
+    let legacy_internal_work_dir = crate::util::legacy_work_dir();
     if cwd
         .as_deref()
         .map(Path::new)
-        .is_some_and(|session_cwd| session_cwd == internal_work_dir.as_path())
+        .is_some_and(|session_cwd| {
+            session_cwd == internal_work_dir.as_path()
+                || session_cwd == legacy_internal_work_dir.as_path()
+        })
     {
         return None;
     }
@@ -574,6 +578,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("s.jsonl");
         let cwd = crate::util::work_dir();
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": "internal generation prompt" },
+            "cwd": cwd,
+        });
+        std::fs::write(&f, line.to_string()).unwrap();
+
+        assert!(read_session_meta(&f).is_none());
+    }
+
+    #[test]
+    fn keeps_legacy_internal_claude_sessions_hidden_after_path_migration() {
+        let dir =
+            std::env::temp_dir().join(format!("monet-legacy-internal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let cwd = dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("blueprint")
+            .join("work");
         let line = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": "internal generation prompt" },

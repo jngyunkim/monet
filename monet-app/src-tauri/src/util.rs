@@ -1,4 +1,65 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Move data from an older app directory into its current location. Existing
+/// files in `current` always win, so upgrading never overwrites newer data.
+pub(crate) fn migrate_legacy_dir(legacy: &Path, current: &Path) {
+    if !legacy.exists() || legacy == current {
+        return;
+    }
+    if !current.exists() && std::fs::rename(legacy, current).is_ok() {
+        return;
+    }
+    if std::fs::create_dir_all(current).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(legacy) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let source = entry.path();
+        let destination = current.join(entry.file_name());
+        if source.is_dir() {
+            migrate_legacy_dir(&source, &destination);
+        } else if destination.exists() {
+            let _ = std::fs::remove_file(&source);
+        } else if std::fs::rename(&source, &destination).is_err()
+            && std::fs::copy(&source, &destination).is_ok()
+        {
+            let _ = std::fs::remove_file(&source);
+        }
+    }
+    let _ = std::fs::remove_dir(legacy);
+}
+
+fn legacy_app_cache_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("blueprint")
+}
+
+fn legacy_app_data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("blueprint")
+}
+
+pub(crate) fn legacy_work_dir() -> PathBuf {
+    legacy_app_cache_dir().join("work")
+}
+
+pub(crate) fn app_cache_dir() -> PathBuf {
+    let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+    let current = base.join("monet");
+    migrate_legacy_dir(&legacy_app_cache_dir(), &current);
+    current
+}
+
+pub(crate) fn app_data_dir() -> PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
+    let current = base.join("monet");
+    migrate_legacy_dir(&legacy_app_data_dir(), &current);
+    current
+}
 
 /// Resolve an executable by name. A GUI app launched from Finder has a minimal
 /// PATH that usually omits ~/.local/bin, Homebrew, etc., so we probe common
@@ -43,10 +104,7 @@ fn which_on_path(name: &str) -> bool {
 /// prompts for Photos, Music, Desktop, etc. Pointing it at an empty cache dir
 /// avoids touching any protected location.
 pub fn work_dir() -> std::path::PathBuf {
-    let d = dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("blueprint")
-        .join("work");
+    let d = app_cache_dir().join("work");
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -88,4 +146,33 @@ pub fn augmented_path() -> String {
         parts.push(existing);
     }
     parts.join(":")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::migrate_legacy_dir;
+    use std::fs;
+
+    #[test]
+    fn migrates_legacy_directory_without_overwriting_new_data() {
+        let root = std::env::temp_dir().join(format!(
+            "monet-migration-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let legacy = root.join("blueprint");
+        let current = root.join("monet");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::create_dir_all(&current).unwrap();
+        fs::write(legacy.join("legacy.json"), "legacy").unwrap();
+        fs::write(legacy.join("shared.json"), "old").unwrap();
+        fs::write(current.join("shared.json"), "new").unwrap();
+
+        migrate_legacy_dir(&legacy, &current);
+
+        assert_eq!(fs::read_to_string(current.join("legacy.json")).unwrap(), "legacy");
+        assert_eq!(fs::read_to_string(current.join("shared.json")).unwrap(), "new");
+        assert!(!legacy.exists());
+        let _ = fs::remove_dir_all(root);
+    }
 }

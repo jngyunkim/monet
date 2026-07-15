@@ -260,7 +260,7 @@ fn render_mingrammer(source: &str) -> Result<String, String> {
     }
 
     let dir = std::env::temp_dir().join(format!(
-        "blueprint-render-{}-{}",
+        "monet-render-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

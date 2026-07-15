@@ -1,4 +1,4 @@
-# Blueprint — Claude Code 설계 세션 시각화 도구
+# Monet — Claude Code 설계 세션 시각화 도구
 
 ## 문제
 

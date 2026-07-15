@@ -1,5 +1,5 @@
 use crate::session::SessionMeta;
-use crate::util::{augmented_path, find_bin, work_dir};
+use crate::util::{app_data_dir, augmented_path, find_bin, work_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -17,10 +17,7 @@ struct Manifest {
 }
 
 pub fn sources_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("blueprint")
-        .join("link-sources")
+    app_data_dir().join("link-sources")
 }
 
 fn slug_id(urls: &[String]) -> String {

@@ -5,10 +5,10 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
+use crate::util::app_cache_dir;
+
 fn cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("blueprint")
+    app_cache_dir()
 }
 
 /// Cache key is derived from a namespace ("diagrams", "glossary", …) plus the
