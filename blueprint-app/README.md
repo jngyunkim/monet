@@ -109,7 +109,7 @@ parsing. Default model is `sonnet` (`DEFAULT_MODEL` in `lib.rs`). Spawned
 ## Releases & in-app updates
 
 The app self-updates via the Tauri updater, reading `latest.json` from the
-GitHub Releases of `jngyunkim/blueprint`.
+GitHub Releases of `jngyunkim/monet`.
 
 To cut a release:
 
