@@ -29,6 +29,13 @@ test("settings exposes the three exclusive transcript minimap modes", () => {
   assert.match(html, /data-minimap-mode="events"/);
 });
 
+test("Transcript exposes a Focused-first detail toggle", () => {
+  assert.match(html, /id="transcript-filter-select"[^>]*role="radiogroup"/);
+  assert.match(html, /data-transcript-filter="focused"[^>]*>Focused</);
+  assert.match(html, /data-transcript-filter="all"[^>]*>All</);
+  assert.match(main, /let transcriptFilterMode[^=]*=\s*savedTranscriptFilter === "all" \? "all" : "focused"/);
+});
+
 test("Explore in depth renders as a single scannable list", () => {
   assert.match(main, /className = "tree-list"/);
   assert.match(main, /class="tree-row-end"/);

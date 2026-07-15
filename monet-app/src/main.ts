@@ -6,11 +6,13 @@ import mermaid from "mermaid";
 import { marked } from "marked";
 import {
   compactTranscriptPreview,
+  filterTranscriptBlockIndices,
   filterTranscriptEntryIndices,
   findNearestTranscriptEntry,
   sampleTranscriptEntries,
   transcriptMarkerRatio,
   type TranscriptEntryKind,
+  type TranscriptFilterMode,
   type TranscriptMinimapMode,
 } from "./transcript-nav";
 import { microworldStateRows } from "./microworld";
@@ -86,6 +88,7 @@ type Msg = {
   tool?: string;
   subtitle?: string;
   is_error: boolean;
+  context_relevant: boolean;
 };
 
 type DepStatus = {
@@ -141,6 +144,10 @@ let minimapMode: TranscriptMinimapMode =
     ? savedMinimapMode
     : "events";
 
+const savedTranscriptFilter = localStorage.getItem("monet-transcript-filter");
+let transcriptFilterMode: TranscriptFilterMode =
+  savedTranscriptFilter === "all" ? "all" : "focused";
+
 type Model = "haiku" | "sonnet" | "opus";
 const MODEL_LABELS: Record<Model, string> = {
   haiku: "Haiku 4.5",
@@ -166,6 +173,7 @@ const designView = $("#design-view");
 const askView = $("#ask-view");
 const transcriptShell = $("#transcript-shell");
 const transcriptView = $<HTMLDivElement>("#transcript-view");
+const transcriptFilterBar = $("#transcript-filter-bar");
 const transcriptMap = $("#transcript-map");
 const transcriptMapTrack = $("#transcript-map-track");
 const transcriptMapPreview = $("#transcript-map-preview");
@@ -183,6 +191,7 @@ let transcriptNavMarkers: HTMLButtonElement[] = [];
 let transcriptNavFrame = 0;
 let transcriptProgressFrame = 0;
 let transcriptHoverMarker = -1;
+let transcriptBlocks: Msg[] = [];
 
 function fmtDate(epochSecs: number): string {
   const d = new Date(epochSecs * 1000);
@@ -438,6 +447,7 @@ async function selectSession(s: SessionMeta) {
   viewerSub.textContent = `${s.project} · ${fmtDate(s.modified)}`;
   const link = isLinkSource(s);
   $("#refresh-source-btn").classList.toggle("hidden", !link);
+  transcriptFilterBar.classList.toggle("hidden", link);
   // The last tab is "Source" for imported links, "Transcript" for sessions.
   $("#tab-transcript").textContent = link ? "Source" : "Transcript";
 
@@ -457,6 +467,7 @@ async function selectSession(s: SessionMeta) {
   designView.innerHTML = "";
   renderAsk();
   clearTranscriptNavigation();
+  transcriptBlocks = [];
   transcriptView.textContent = "Loading transcript…";
 
   // Prefetch the cached forest (no Claude call); if present, also prefetch its
@@ -501,16 +512,21 @@ async function selectSession(s: SessionMeta) {
 }
 
 function renderTranscript(blocks: Msg[]) {
+  transcriptBlocks = blocks;
   clearTranscriptNavigation();
   transcriptView.innerHTML = "";
   if (!blocks.length) {
     transcriptView.innerHTML = `<p class="muted">No messages in this session.</p>`;
     return;
   }
+  const visible = new Set(filterTranscriptBlockIndices(blocks, transcriptFilterMode));
+  let rendered = 0;
   let i = 0;
   while (i < blocks.length) {
     const b = blocks[i];
     if (b.kind === "text") {
+      const index = i++;
+      if (!visible.has(index)) continue;
       const el = document.createElement("div");
       el.className = `msg msg-${b.role}`;
       el.innerHTML =
@@ -523,8 +539,10 @@ function renderTranscript(blocks: Msg[]) {
         b.text,
         b.role,
       );
-      i++;
+      rendered++;
     } else if (b.kind === "thinking") {
+      const index = i++;
+      if (!visible.has(index)) continue;
       const thinking = aside(
         "msg-thinking",
         `<span class="aside-badge">Thinking</span>`,
@@ -532,18 +550,28 @@ function renderTranscript(blocks: Msg[]) {
       );
       transcriptView.appendChild(thinking);
       registerTranscriptNav(thinking, "Thinking", b.text, "thinking");
-      i++;
+      rendered++;
     } else if (b.kind === "tool_use" || b.kind === "tool_result") {
       // Group a run of tool calls with the run of results that follows, so
       // each call and its result read as one connected pair.
-      const calls: Msg[] = [];
-      while (i < blocks.length && blocks[i].kind === "tool_use") calls.push(blocks[i++]);
-      const results: Msg[] = [];
-      while (i < blocks.length && blocks[i].kind === "tool_result") results.push(blocks[i++]);
+      const calls: Array<{ block: Msg; index: number }> = [];
+      while (i < blocks.length && blocks[i].kind === "tool_use") {
+        calls.push({ block: blocks[i], index: i++ });
+      }
+      const results: Array<{ block: Msg; index: number }> = [];
+      while (i < blocks.length && blocks[i].kind === "tool_result") {
+        results.push({ block: blocks[i], index: i++ });
+      }
       const n = Math.max(calls.length, results.length);
       for (let k = 0; k < n; k++) {
-        const call = calls[k];
-        const result = results[k];
+        const callEntry = calls[k];
+        const resultEntry = results[k];
+        if (
+          !visible.has(callEntry?.index ?? -1) &&
+          !visible.has(resultEntry?.index ?? -1)
+        ) continue;
+        const call = callEntry?.block;
+        const result = resultEntry?.block;
         const pair = document.createElement("div");
         pair.className = "tool-pair" + (result?.is_error ? " error" : "");
         if (call) pair.appendChild(toolCall(call));
@@ -559,10 +587,15 @@ function renderTranscript(blocks: Msg[]) {
           preview,
           result?.is_error ? "error" : "tool",
         );
+        rendered++;
       }
     } else {
       i++;
     }
+  }
+  if (!rendered) {
+    transcriptView.innerHTML = `<p class="muted">No design-relevant messages. Switch to All to inspect every event.</p>`;
+    return;
   }
   window.requestAnimationFrame(buildTranscriptNavigation);
 }
@@ -1713,6 +1746,14 @@ function updateMinimapModeUI() {
   });
 }
 
+function updateTranscriptFilterUI() {
+  document.querySelectorAll<HTMLButtonElement>("#transcript-filter-select button").forEach((button) => {
+    const active = button.dataset.transcriptFilter === transcriptFilterMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-checked", String(active));
+  });
+}
+
 function openSettings() {
   updateLangUI();
   updateMinimapModeUI();
@@ -1822,6 +1863,15 @@ function wireUi() {
       buildTranscriptNavigation();
     });
   });
+  document.querySelectorAll("#transcript-filter-select button").forEach((b) => {
+    b.addEventListener("click", () => {
+      transcriptFilterMode = (b as HTMLElement).dataset
+        .transcriptFilter as TranscriptFilterMode;
+      localStorage.setItem("monet-transcript-filter", transcriptFilterMode);
+      updateTranscriptFilterUI();
+      if (transcriptBlocks.length) renderTranscript(transcriptBlocks);
+    });
+  });
 
   // Settings modal
   $("#settings-btn").addEventListener("click", openSettings);
@@ -1877,6 +1927,7 @@ window.addEventListener("DOMContentLoaded", () => {
   wireUi();
   updateModelUI();
   updateMinimapModeUI();
+  updateTranscriptFilterUI();
   refreshSessions();
   refreshDeps();
   checkForUpdates(false);

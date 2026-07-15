@@ -2,6 +2,45 @@ export const MAX_TRANSCRIPT_MARKERS = 400;
 
 export type TranscriptEntryKind = "user" | "assistant" | "thinking" | "tool" | "error";
 export type TranscriptMinimapMode = "user" | "messages" | "events";
+export type TranscriptFilterMode = "focused" | "all";
+export type TranscriptFilterBlock = {
+  kind: "text" | "thinking" | "tool_use" | "tool_result";
+  context_relevant?: boolean;
+  is_error?: boolean;
+};
+
+/**
+ * Select transcript blocks for the reading mode. Tool calls/results are paired
+ * by their adjacent runs; a failed result keeps both sides visible in Focused.
+ */
+export function filterTranscriptBlockIndices(
+  blocks: readonly TranscriptFilterBlock[],
+  mode: TranscriptFilterMode,
+): number[] {
+  if (mode === "all") return blocks.map((_, index) => index);
+  const visible: number[] = [];
+  let index = 0;
+  while (index < blocks.length) {
+    if (blocks[index].kind !== "tool_use" && blocks[index].kind !== "tool_result") {
+      if (blocks[index].context_relevant !== false) visible.push(index);
+      index++;
+      continue;
+    }
+
+    const calls: number[] = [];
+    while (index < blocks.length && blocks[index].kind === "tool_use") calls.push(index++);
+    const results: number[] = [];
+    while (index < blocks.length && blocks[index].kind === "tool_result") results.push(index++);
+    for (let pair = 0; pair < Math.max(calls.length, results.length); pair++) {
+      const resultIndex = results[pair];
+      if (resultIndex !== undefined && blocks[resultIndex].is_error) {
+        if (calls[pair] !== undefined) visible.push(calls[pair]);
+        visible.push(resultIndex);
+      }
+    }
+  }
+  return visible;
+}
 
 /** Select the semantic entries represented by the chosen minimap mode. */
 export function filterTranscriptEntryIndices(

@@ -3,11 +3,28 @@ import test from "node:test";
 
 import {
   compactTranscriptPreview,
+  filterTranscriptBlockIndices,
   filterTranscriptEntryIndices,
   findNearestTranscriptEntry,
   sampleTranscriptEntries,
   transcriptMarkerRatio,
 } from "../src/transcript-nav.ts";
+
+test("Focused transcript keeps design context and error tool pairs", () => {
+  const blocks = [
+    { kind: "text", context_relevant: true },
+    { kind: "text", context_relevant: false },
+    { kind: "thinking", context_relevant: false },
+    { kind: "tool_use", context_relevant: false },
+    { kind: "tool_result", context_relevant: false, is_error: false },
+    { kind: "tool_use", context_relevant: false },
+    { kind: "tool_result", context_relevant: true, is_error: true },
+    { kind: "text", context_relevant: true },
+  ] as const;
+
+  assert.deepEqual(filterTranscriptBlockIndices(blocks, "focused"), [0, 5, 6, 7]);
+  assert.deepEqual(filterTranscriptBlockIndices(blocks, "all"), [0, 1, 2, 3, 4, 5, 6, 7]);
+});
 
 test("filterTranscriptEntryIndices applies the three minimap detail modes", () => {
   const kinds = ["user", "assistant", "thinking", "tool", "error"] as const;

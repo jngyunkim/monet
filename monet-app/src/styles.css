@@ -818,9 +818,46 @@ button {
   position: relative;
   padding: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.transcript-toolbar {
+  height: 42px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.transcript-filter-select {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.transcript-filter-select button {
+  min-width: 62px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.transcript-filter-select button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 .transcript-view {
-  height: 100%;
+  height: auto;
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 20px 58px 72px;
@@ -847,7 +884,7 @@ button {
 .transcript-map {
   position: absolute;
   z-index: 4;
-  top: 24px;
+  top: 58px;
   bottom: 24px;
   left: 12px;
   width: 26px;

@@ -82,6 +82,13 @@
           <div id="design-view" class="content-view design-view"></div>
           <div id="ask-view" class="content-view ask-view hidden"></div>
           <div id="transcript-shell" class="content-view transcript-shell hidden">
+            <div id="transcript-filter-bar" class="transcript-toolbar">
+              <span>Transcript view</span>
+              <div id="transcript-filter-select" class="transcript-filter-select" role="radiogroup" aria-label="Transcript detail">
+                <button type="button" role="radio" data-transcript-filter="focused">Focused</button>
+                <button type="button" role="radio" data-transcript-filter="all">All</button>
+              </div>
+            </div>
             <nav id="transcript-map" class="transcript-map hidden" aria-label="Transcript quick navigation">
               <div id="transcript-map-track" class="transcript-map-track"></div>
               <div id="transcript-map-preview" class="transcript-map-preview hidden" role="tooltip">

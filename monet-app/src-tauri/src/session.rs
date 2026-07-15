@@ -267,6 +267,16 @@ pub struct Block {
     /// True when a tool_result reported an error.
     #[serde(default)]
     pub is_error: bool,
+    /// Whether this block contributes to the compact Design / Ask context.
+    pub context_relevant: bool,
+}
+
+fn keep_pending_context(out: &mut [Block], pending: &mut Vec<usize>) {
+    for index in pending.drain(..) {
+        if let Some(block) = out.get_mut(index) {
+            block.context_relevant = true;
+        }
+    }
 }
 
 const MAX_BLOCK_CHARS: usize = 6000;
@@ -321,6 +331,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
         Err(_) => return Vec::new(),
     };
     let mut out = Vec::new();
+    let mut pending_tool_narration = Vec::new();
     for line in content.lines() {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -340,6 +351,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                     Some(Value::String(s)) => {
                         let trimmed = s.trim();
                         if !trimmed.is_empty() && !is_noise(trimmed) {
+                            keep_pending_context(&mut out, &mut pending_tool_narration);
                             out.push(Block {
                                 role: "user".into(),
                                 kind: "text".into(),
@@ -347,6 +359,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                 tool: None,
                                 subtitle: None,
                                 is_error: false,
+                                context_relevant: true,
                             });
                         }
                     }
@@ -357,6 +370,10 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                     if let Some(txt) = b.get("text").and_then(|x| x.as_str()) {
                                         let trimmed = txt.trim();
                                         if !trimmed.is_empty() && !is_noise(trimmed) {
+                                            keep_pending_context(
+                                                &mut out,
+                                                &mut pending_tool_narration,
+                                            );
                                             out.push(Block {
                                                 role: "user".into(),
                                                 kind: "text".into(),
@@ -364,6 +381,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                                 tool: None,
                                                 subtitle: None,
                                                 is_error: false,
+                                                context_relevant: true,
                                             });
                                         }
                                     }
@@ -380,6 +398,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                         tool: None,
                                         subtitle: None,
                                         is_error,
+                                        context_relevant: is_error,
                                     });
                                 }
                                 _ => {}
@@ -391,11 +410,19 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
             }
             "assistant" => {
                 if let Some(Value::Array(arr)) = msg_content {
+                    let tool_bound = v
+                        .get("message")
+                        .and_then(|m| m.get("stop_reason"))
+                        .and_then(|x| x.as_str())
+                        == Some("tool_use");
+                    let mut tool_narration = Vec::new();
+                    let mut had_text = false;
                     for b in arr {
                         match b.get("type").and_then(|x| x.as_str()) {
                             Some("text") => {
                                 if let Some(txt) = b.get("text").and_then(|x| x.as_str()) {
                                     if !txt.trim().is_empty() {
+                                        had_text = true;
                                         out.push(Block {
                                             role: "assistant".into(),
                                             kind: "text".into(),
@@ -403,7 +430,11 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                             tool: None,
                                             subtitle: None,
                                             is_error: false,
+                                            context_relevant: !tool_bound,
                                         });
+                                        if tool_bound {
+                                            tool_narration.push(out.len() - 1);
+                                        }
                                     }
                                 }
                             }
@@ -421,6 +452,7 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                         tool: None,
                                         subtitle: None,
                                         is_error: false,
+                                        context_relevant: false,
                                     });
                                 }
                             }
@@ -441,16 +473,23 @@ pub fn extract_blocks(path: &str) -> Vec<Block> {
                                     tool: Some(name),
                                     subtitle,
                                     is_error: false,
+                                    context_relevant: false,
                                 });
                             }
                             _ => {}
                         }
+                    }
+                    if tool_bound && had_text {
+                        pending_tool_narration = tool_narration;
+                    } else if had_text {
+                        pending_tool_narration.clear();
                     }
                 }
             }
             _ => {}
         }
     }
+    keep_pending_context(&mut out, &mut pending_tool_narration);
     out
 }
 
@@ -537,6 +576,31 @@ mod tests {
         assert!(!context.contains("Let me inspect"));
         assert!(!context.contains("task-notification"));
         assert!(!context.contains("large file dump"));
+    }
+
+    #[test]
+    fn structured_blocks_mark_design_context_relevance() {
+        let dir = std::env::temp_dir().join(format!("monet-focused-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let lines = vec![
+            r#"{"type":"user","message":{"role":"user","content":"design an auth flow"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Let me inspect first."},{"type":"tool_use","name":"Read","input":{"file_path":"auth.rs"}}],"stop_reason":"tool_use"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"file dump"}]}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The gateway validates the token."}],"stop_reason":"end_turn"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"false"}}],"stop_reason":"tool_use"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"command failed","is_error":true}]}}"#,
+        ];
+        std::fs::write(&f, lines.join("\n")).unwrap();
+
+        let blocks = extract_blocks(f.to_str().unwrap());
+
+        assert!(blocks.iter().find(|b| b.text == "design an auth flow").unwrap().context_relevant);
+        assert!(!blocks.iter().find(|b| b.text == "Let me inspect first.").unwrap().context_relevant);
+        assert!(!blocks.iter().find(|b| b.tool.as_deref() == Some("Read")).unwrap().context_relevant);
+        assert!(!blocks.iter().find(|b| b.text == "file dump").unwrap().context_relevant);
+        assert!(blocks.iter().find(|b| b.text == "The gateway validates the token.").unwrap().context_relevant);
+        assert!(blocks.iter().find(|b| b.text == "command failed").unwrap().context_relevant);
     }
 
     #[test]
