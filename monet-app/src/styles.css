@@ -1183,6 +1183,17 @@ button {
   box-shadow: var(--shadow);
   animation: rise 0.25s ease-out;
 }
+.update-copy {
+  display: grid;
+  gap: 3px;
+  max-width: 360px;
+}
+.update-error {
+  color: var(--error);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 @keyframes rise {
   from {
     opacity: 0;

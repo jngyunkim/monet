@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import mermaid from "mermaid";
 import { marked } from "marked";
 import {
@@ -1700,7 +1699,10 @@ function showUpdateBanner(update: Update) {
   const banner = document.createElement("div");
   banner.id = "update-banner";
   banner.innerHTML = `
-    <span>Update available: <b>v${escapeHtml(update.version)}</b></span>
+    <span class="update-copy">
+      <span>Update available: <b>v${escapeHtml(update.version)}</b></span>
+      <span class="update-error" id="update-error-message" hidden></span>
+    </span>
     <span class="update-actions">
       <button id="update-install">Install & Restart</button>
       <button id="update-dismiss">Later</button>
@@ -1712,15 +1714,19 @@ function showUpdateBanner(update: Update) {
   );
   banner.querySelector("#update-install")!.addEventListener("click", async () => {
     const install = banner.querySelector<HTMLButtonElement>("#update-install")!;
+    const error = banner.querySelector<HTMLElement>("#update-error-message")!;
     install.disabled = true;
     install.textContent = "Downloading…";
+    error.hidden = true;
     try {
       await update.downloadAndInstall();
       install.textContent = "Restarting…";
-      await relaunch();
+      await invoke("restart_after_update");
     } catch (e) {
       install.disabled = false;
       install.textContent = "Retry";
+      error.textContent = e instanceof Error ? e.message : String(e);
+      error.hidden = false;
       console.error("update install failed", e);
     }
   });

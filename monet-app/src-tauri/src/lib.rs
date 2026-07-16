@@ -370,10 +370,55 @@ async fn delete_session(path: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+fn app_bundle_path(executable: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let macos_dir = executable
+        .parent()
+        .ok_or("could not resolve executable directory")?;
+    let contents_dir = macos_dir
+        .parent()
+        .ok_or("could not resolve app Contents directory")?;
+    let bundle = contents_dir
+        .parent()
+        .ok_or("could not resolve app bundle")?;
+    if macos_dir.file_name().and_then(|name| name.to_str()) != Some("MacOS")
+        || contents_dir.file_name().and_then(|name| name.to_str()) != Some("Contents")
+        || bundle.extension().and_then(|ext| ext.to_str()) != Some("app")
+    {
+        return Err("current executable is not inside a macOS app bundle".to_string());
+    }
+    Ok(bundle.to_path_buf())
+}
+
+#[tauri::command]
+fn restart_after_update() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::env::current_exe()
+            .map_err(|e| format!("could not resolve current executable: {e}"))?;
+        let bundle = app_bundle_path(&executable)?;
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg("-n")
+            .arg(&bundle)
+            .status()
+            .map_err(|e| format!("could not reopen {}: {e}", bundle.display()))?;
+        if !status.success() {
+            return Err(format!(
+                "could not reopen {}: open exited with {status}",
+                bundle.display()
+            ));
+        }
+        std::process::exit(0);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err("restart after update is only supported on macOS".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generation_namespace, resolve_within};
+    use super::{app_bundle_path, generation_namespace, resolve_within};
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn accepts_file_inside_base_and_rejects_outside() {
@@ -399,12 +444,20 @@ mod tests {
             "tree-auth-context-v2-ko"
         );
     }
+
+    #[test]
+    fn restart_resolves_the_monet_app_bundle() {
+        let executable = Path::new("/Applications/Monet.app/Contents/MacOS/monet-app");
+        assert_eq!(
+            app_bundle_path(executable).unwrap(),
+            Path::new("/Applications/Monet.app")
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -424,7 +477,8 @@ pub fn run() {
             cancel_generation,
             import_link,
             refresh_source,
-            delete_session
+            delete_session,
+            restart_after_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
